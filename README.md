@@ -35,6 +35,7 @@
 2. 執行程式碼
 
 ## 創建環境
+### Conda
 如果沒有 Conda.
 1. 下載 Windows 版本 miniconda (下方Latest Miniconda installer links)
     + 網址: https://docs.anaconda.com/miniconda/
@@ -56,9 +57,23 @@ conda init
 # 重新啟動 terminal
 conda activate MOST
 
-pip install -r requirement.txt
+pip install -r requirements.txt
 ```
 
+#### install error
+> ERROR: Ignored the following versions that require a different python version: 1.21.2 Requires-Python >=3.7,<3.11; 1.21.3 Requires-Python >=3.7,<3.11; 1.21.4 Requires-Python >=3.7,<3.11; 1.21.5 Requires-Python >=3.7,<3.11; 1.21.6 Requires-Python >=3.7,<3.11; 1.6.2 Requires-Python >=3.7,<3.10; 1.6.3 Requires-Python >=3.7,<3.10; 1.7.0 Requires-Python >=3.7,<3.10; 1.7.1 Requires-Python >=3.7,<3.10; 1.7.2 Requires-Python >=3.7,<3.11; 1.7.3 Requires-Python >=3.7,<3.11; 1.8.0 Requires-Python >=3.8,<3.11; 1.8.0rc1 Requires-Python >=3.8,<3.11; 1.8.0rc2 Requires-Python >=3.8,<3.11; 1.8.0rc3 Requires-Python >=3.8,<3.11; 1.8.0rc4 Requires-Python >=3.8,<3.11; 1.8.1 Requires-Python >=3.8,<3.11
+ERROR: Could not find a version that satisfies the requirement tensorflow_intel==2.18.0 (from versions: 0.0.1)
+ERROR: No matching distribution found for tensorflow_intel==2.18.0
+
+line 132 tensorflow_intel-> tensorflow
+
+>RuntimeError: Failed to import transformers.integrations.integration_utils because of the following error (look up to see its traceback):
+Failed to import transformers.modeling_tf_utils because of the following error (look up to see its traceback):
+Your currently installed version of Keras is Keras 3, but this is not yet supported in Transformers. Please install the backwards-compatible tf-keras package with `pip install tf-keras`.
+
+``` bash
+pip install tf-keras
+```
 ## 執行
 ```
 # 研究計畫
@@ -124,7 +139,6 @@ export PKG_CONFIG_PATH="/opt/homebrew/opt/tcl-tk/lib/pkgconfig"
 
 source ~/.zshrc
 ```
-
 
 # TODO
 + [x] 1.助理教授不能審教授或研究員，2.助研究員不能審教授或研究員。3.同校直接避開

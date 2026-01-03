@@ -9,6 +9,8 @@ def main():
     # : parser setting
     parser = argparse.ArgumentParser(description="腳本執行器")
     parser.add_argument('--choose_mode', default='輸出推薦委員', type=str, help='選擇模式（"存入資料庫", "輸出推薦委員"）', choices=['存入資料庫', '輸出推薦委員'])
+    parser.add_argument('--is_industry', type=str, default='False', help='是否為產學計劃')
+    parser.add_argument('--is_load_chroma_bge', type=str, default='False', help='是否重新匯入資料')
     args = parser.parse_args()
     
     if value_of_key("目前執行計畫") == "產學合作": is_industry = True
