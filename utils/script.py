@@ -115,11 +115,13 @@ def search_v3(is_industry=False):
     # 判斷「研究計畫」與「產學合作」的資料庫路徑
     if is_industry:
         chroma_db_path = find_key_path('CHROMA_INDUSTRY')
-        vectorstore = Chroma("CHROMA_INDUSTRY", persist_directory=chroma_db_path, embedding_function=get_embeddings_zh())
+        embedding_function = get_embeddings_zh()
+        vectorstore = Chroma("CHROMA_INDUSTRY", persist_directory=chroma_db_path, embedding_function=embedding_function)
         excel_folder_path = find_key_path("產學合作申請名冊")
     else:
         chroma_db_path = find_key_path('CHROMA')
-        vectorstore = Chroma("CHROMA", persist_directory=chroma_db_path, embedding_function=get_embeddings_zh())
+        embedding_function = get_embeddings_zh()
+        vectorstore = Chroma("CHROMA", persist_directory=chroma_db_path, embedding_function=embedding_function)
         excel_folder_path = find_key_path("研究計畫申請名冊")
         
     former_manager = get_former_manager(find_key_path("曾任委員"))
@@ -134,7 +136,6 @@ def search_v3(is_industry=False):
         "職稱",
         "申請主持人欄位名稱",
         "申請機構欄位名稱",
-        
     ]
     for key in keys:
         temp_value = value_of_key(key)
@@ -159,9 +160,148 @@ def search_v3(is_industry=False):
     xls = pd.ExcelFile(excel_folder_path)
     writer = pd.ExcelWriter(output_excel_folder_path, engine='openpyxl')
     
+    # 擴展相似度記錄的欄位，加入維度語義解釋欄位
     similarity_record_path = f"./data/output/similarity_record_{value_of_key('FINAL_COMMITTEE')}"
     os.makedirs(os.path.dirname(similarity_record_path), exist_ok=True)
-    similarity_df = pd.DataFrame(columns=["query_text", "compared_text", "recommended_manager", "model_name", "similarity_score"])
+    similarity_df = pd.DataFrame(columns=[
+        "query_text", "compared_text", "recommended_manager", "model_name", "similarity_score",
+        "cosine_similarity", "euclidean_distance", "common_keywords", "dimension_semantic_meaning",
+        "similarity_factors", "vector_analysis_summary"
+    ])
+    
+    # 初始化維度語義解釋器
+    dimension_interpreter = initialize_dimension_interpreter(embedding_function)
+    
+    # 添加向量相似度分析函數，包括維度語義解釋
+    def analyze_vector_similarity_with_semantics(query_text, compared_text, embedding_function, dimension_interpreter):
+        """分析兩段文本的向量相似度，並提供維度的語義解釋"""
+        import numpy as np
+        from sklearn.metrics.pairwise import cosine_similarity
+        import jieba
+        import jieba.analyse
+        
+        # 生成嵌入向量
+        query_embedding = embedding_function.embed_query(query_text)
+        compared_embedding = embedding_function.embed_documents([compared_text])[0]
+        
+        # 轉換為numpy數組以便計算
+        query_array = np.array(query_embedding)
+        compared_array = np.array(compared_embedding)
+        
+        # 計算餘弦相似度
+        cosine_sim = cosine_similarity([query_array], [compared_array])[0][0]
+        
+        # 計算歐氏距離
+        euclidean_dist = np.linalg.norm(query_array - compared_array)
+        
+        # 計算每個維度的貢獻
+        dimension_contributions = query_array * compared_array
+        
+        # 找出貢獻最大的維度
+        top_positive_indices = np.argsort(dimension_contributions)[-10:][::-1]
+        
+        # 獲取這些維度的貢獻值
+        top_contributions = [(int(idx), float(dimension_contributions[idx])) for idx in top_positive_indices]
+        
+        # 解釋這些維度的語義含義
+        dimension_semantics = []
+        for dim_idx, contrib in top_contributions[:5]:  # 只解釋前5個維度
+            semantic_meaning = interpret_dimension_semantics(dim_idx, dimension_interpreter, query_text, compared_text)
+            dimension_semantics.append({
+                "dimension": dim_idx,
+                "contribution": contrib,
+                "semantic_meaning": semantic_meaning
+            })
+        
+        # 提取兩段文本的關鍵詞
+        query_keywords = jieba.analyse.extract_tags(query_text, topK=30, withWeight=True)
+        compared_keywords = jieba.analyse.extract_tags(compared_text, topK=30, withWeight=True)
+        
+        # 轉換為字典
+        query_dict = {word: weight for word, weight in query_keywords}
+        compared_dict = {word: weight for word, weight in compared_keywords}
+        
+        # 找出共同關鍵詞
+        common_keywords = set(query_dict.keys()) & set(compared_dict.keys())
+        
+        # 計算關鍵詞相似度貢獻
+        keyword_contributions = []
+        for keyword in common_keywords:
+            contribution = query_dict[keyword] * compared_dict[keyword]
+            keyword_contributions.append((keyword, contribution))
+        
+        # 按貢獻度排序
+        keyword_contributions.sort(key=lambda x: x[1], reverse=True)
+        
+        # 分析相似度因素
+        similarity_factors = []
+        
+        # 1. 關鍵詞重疊
+        if common_keywords:
+            overlap_ratio = len(common_keywords) / max(len(query_dict), len(compared_dict))
+            if overlap_ratio > 0.3:
+                factor = f"關鍵詞重疊度高 ({len(common_keywords)}個共同關鍵詞，重疊率{overlap_ratio:.2f})"
+                similarity_factors.append(factor)
+        
+        # 2. 向量空間貢獻
+        total_contribution = np.sum(dimension_contributions)
+        if total_contribution > 0:
+            top_dim_contribution = np.sum(dimension_contributions[top_positive_indices])
+            top_ratio = top_dim_contribution / total_contribution
+            if top_ratio > 0.5:
+                factor = f"向量空間中少數維度({len(top_positive_indices)}個)貢獻顯著，占總貢獻的{top_ratio:.2f}"
+                similarity_factors.append(factor)
+        
+        # 3. 維度語義相關性
+        if dimension_semantics:
+            semantic_themes = [item["semantic_meaning"]["theme"] for item in dimension_semantics if "theme" in item["semantic_meaning"]]
+            if semantic_themes:
+                factor = f"向量維度捕捉到的主題包括: {', '.join(semantic_themes[:3])}"
+                similarity_factors.append(factor)
+        
+        # 生成維度語義解釋摘要
+        dimension_semantic_summary = ""
+        for item in dimension_semantics:
+            dim = item["dimension"]
+            contrib = item["contribution"]
+            meaning = item["semantic_meaning"]
+            
+            if "theme" in meaning and "keywords" in meaning:
+                dimension_semantic_summary += f"維度{dim} (貢獻值: {contrib:.4f}): 主題「{meaning['theme']}」，關聯詞彙: {', '.join(meaning['keywords'][:5])}\n"
+            elif "keywords" in meaning:
+                dimension_semantic_summary += f"維度{dim} (貢獻值: {contrib:.4f}): 關聯詞彙: {', '.join(meaning['keywords'][:5])}\n"
+        
+        # 生成分析摘要
+        if cosine_sim > 0.8:
+            summary = f"高度相似 (餘弦相似度{cosine_sim:.4f})，"
+        elif cosine_sim > 0.6:
+            summary = f"中度相似 (餘弦相似度{cosine_sim:.4f})，"
+        else:
+            summary = f"相似度一般 (餘弦相似度{cosine_sim:.4f})，"
+            
+        if common_keywords:
+            top_kw = [k for k, _ in keyword_contributions[:3]]
+            summary += f"共同關鍵詞包括「{', '.join(top_kw)}」等。"
+        else:
+            summary += "無明顯共同關鍵詞。"
+            
+        if dimension_semantics:
+            themes = [item["semantic_meaning"].get("theme", "") for item in dimension_semantics if "theme" in item["semantic_meaning"]]
+            if themes:
+                summary += f" 主要相似主題: {', '.join(themes[:2])}。"
+        
+        # 返回分析結果
+        return {
+            "cosine_similarity": float(cosine_sim),
+            "euclidean_distance": float(euclidean_dist),
+            "top_contributions": top_contributions,
+            "common_keywords": list(common_keywords),
+            "keyword_contributions": [(k, float(c)) for k, c in keyword_contributions[:10]],
+            "dimension_semantics": dimension_semantics,
+            "similarity_factors": similarity_factors,
+            "dimension_semantic_summary": dimension_semantic_summary,
+            "summary": summary
+        }
     
     try:
         project_name_field_name = value_of_key("計畫名稱")
@@ -180,7 +320,7 @@ def search_v3(is_industry=False):
             if missing_fields:
                 print("現有欄位:", existing_fields)
                 print("應當欄位:", filter_fields)
-                raise ValueError("欄位不匹配，程式碼運行停止")  # 引發例外，中止程式碼運行
+                raise ValueError("欄位不匹配，程式碼運行停止")
 
             df = df[filter_fields]
 
@@ -205,11 +345,23 @@ def search_v3(is_industry=False):
                     k=RECOMMAND_AMOUNT
                 )
                 
-                # 將搜尋結果寫入 CSV
+                # 將搜尋結果寫入 CSV，並添加相似度分析
                 for doc, score in documents:
                     recommended_manager = doc.metadata['manager'] 
-                    compared_text = doc.page_content  # 可根據需求選擇不同內容
-                    model_name = "BGE_ZH"  # 依實際使用的模型名稱
+                    compared_text = doc.page_content
+                    model_name = "BGE_ZH"
+                    
+                    # 進行向量相似度分析 (包括維度語義解釋)
+                    vector_analysis = analyze_vector_similarity_with_semantics(
+                        current_text_combine, compared_text, embedding_function, dimension_interpreter
+                    )
+                    
+                    # 提取關鍵信息
+                    cosine_similarity = vector_analysis["cosine_similarity"]
+                    euclidean_distance = vector_analysis["euclidean_distance"]
+                    common_keywords = ", ".join(vector_analysis["common_keywords"][:10]) if vector_analysis["common_keywords"] else ""
+                    dimension_semantic_meaning = vector_analysis["dimension_semantic_summary"]
+                    similarity_factors = "; ".join(vector_analysis["similarity_factors"])
                     
                     # 追加數據
                     new_row = pd.DataFrame([{
@@ -217,13 +369,18 @@ def search_v3(is_industry=False):
                         "compared_text": compared_text,
                         "recommended_manager": recommended_manager,
                         "model_name": model_name,
-                        "similarity_score": score
+                        "similarity_score": score,
+                        "cosine_similarity": cosine_similarity,
+                        "euclidean_distance": euclidean_distance,
+                        "common_keywords": common_keywords,
+                        "dimension_semantic_meaning": dimension_semantic_meaning,
+                        "similarity_factors": similarity_factors,
+                        "vector_analysis_summary": vector_analysis["summary"]
                     }])
                     
                     new_row = new_row.reindex(columns=similarity_df.columns)
                     if not new_row.empty and not new_row.isna().all(axis=None):
                         similarity_df = pd.concat([similarity_df, new_row], ignore_index=True)
-
         
                 # 分數填入 Excel 的動作 (和原程式邏輯相同)
                 for j, (doc, score) in enumerate(documents):
@@ -261,7 +418,272 @@ def search_v3(is_industry=False):
         writer.close()  
         with pd.ExcelWriter(similarity_record_path, engine='openpyxl') as similarity_writer:
             similarity_df.to_excel(similarity_writer, sheet_name="Similarity Records", index=False)
+        
+        # 生成相似度分析報告
+        generate_dimension_semantic_report(similarity_df, os.path.join(os.path.dirname(similarity_record_path), "dimension_semantic_analysis.md"))
+
+# 初始化維度語義解釋器
+def initialize_dimension_interpreter(embedding_function):
+    """初始化向量維度語義解釋器"""
+    import numpy as np
+    from collections import defaultdict
+    
+    # 這個函數會創建一個解釋器，用於解釋向量維度的語義含義
+    # 在實際應用中，可能需要預先分析大量文本來建立這個解釋器
+    
+    # 創建一些常見主題的關鍵詞
+    topics = {
+        "資訊科技": ["人工智慧", "機器學習", "深度學習", "大數據", "雲計算", "區塊鏈", "物聯網", "演算法", "資料庫", "網路安全"],
+        "生物醫學": ["基因", "蛋白質", "細胞", "酶", "抗體", "病毒", "免疫", "藥物", "臨床", "診斷", "治療", "醫療"],
+        "材料科學": ["奈米材料", "複合材料", "高分子", "陶瓷", "金屬", "半導體", "導電", "磁性", "光學", "熱學"],
+        "能源環境": ["再生能源", "太陽能", "風能", "水力", "生質能", "碳排放", "溫室氣體", "永續發展", "生態", "污染"],
+        "電子工程": ["電路", "晶片", "感測器", "微處理器", "電源", "通訊", "訊號處理", "嵌入式系統", "控制系統"],
+        "化學工程": ["催化", "反應", "合成", "聚合", "分離", "萃取", "吸附", "蒸餾", "結晶", "化學反應"],
+        "機械工程": ["機構", "機械", "流體", "熱力學", "動力學", "振動", "摩擦", "應力", "變形", "製造"],
+        "土木工程": ["結構", "建築", "橋梁", "道路", "水利", "地質", "測量", "混凝土", "鋼材", "施工"],
+        "經濟管理": ["經濟", "金融", "市場", "投資", "管理", "策略", "營運", "組織", "人力資源", "供應鏈"],
+        "人文社會": ["文化", "歷史", "哲學", "社會", "政治", "法律", "教育", "心理", "語言", "藝術"],
+        "農業科學": ["作物", "畜牧", "土壤", "灌溉", "肥料", "病蟲害", "育種", "農藥", "農業生產", "食品加工"]
+    }
+    
+    # 為每個主題生成嵌入向量
+    topic_embeddings = {}
+    for topic, keywords in topics.items():
+        # 將關鍵詞組合成一段文本
+        topic_text = " ".join(keywords)
+        # 生成嵌入向量
+        topic_embedding = embedding_function.embed_query(topic_text)
+        topic_embeddings[topic] = (np.array(topic_embedding), keywords)
+    
+    # 創建一個解釋器對象
+    interpreter = {
+        "topic_embeddings": topic_embeddings,
+        "dimension_keywords": defaultdict(list)
+    }
+    
+    # 分析每個維度與主題的關係
+    embedding_dim = len(next(iter(topic_embeddings.values()))[0])
+    for dim in range(embedding_dim):
+        # 找出在該維度上值最高的主題
+        dim_scores = {}
+        for topic, (embedding, _) in topic_embeddings.items():
+            dim_scores[topic] = embedding[dim]
+        
+        # 按維度值排序
+        sorted_topics = sorted(dim_scores.items(), key=lambda x: x[1], reverse=True)
+        
+        # 將前3個主題及其關鍵詞關聯到該維度
+        for topic, score in sorted_topics[:3]:
+            if score > 0:  # 只考慮正向關聯
+                _, keywords = topic_embeddings[topic]
+                interpreter["dimension_keywords"][dim].append((topic, score, keywords))
+    
+    return interpreter
+
+# 解釋維度的語義含義
+def interpret_dimension_semantics(dimension_idx, interpreter, query_text, compared_text):
+    """解釋指定維度的語義含義"""
+    import jieba
+    import jieba.analyse
+    
+    # 獲取該維度關聯的主題和關鍵詞
+    dimension_info = interpreter["dimension_keywords"].get(dimension_idx, [])
+    
+    if not dimension_info:
+        return {"message": "無法解釋該維度的語義含義"}
+    
+    # 獲取最相關的主題
+    top_topic, score, topic_keywords = dimension_info[0]
+    
+    # 提取查詢文本和比較文本的關鍵詞
+    query_keywords = set(jieba.analyse.extract_tags(query_text, topK=30))
+    compared_keywords = set(jieba.analyse.extract_tags(compared_text, topK=30))
+    
+    # 找出文本中與該維度相關的關鍵詞
+    related_keywords_in_query = query_keywords.intersection(topic_keywords)
+    related_keywords_in_compared = compared_keywords.intersection(topic_keywords)
+    
+    # 合併兩個文本中的相關關鍵詞
+    all_related_keywords = list(related_keywords_in_query.union(related_keywords_in_compared))
+    
+    # 如果找不到相關關鍵詞，嘗試使用TF-IDF提取更多關鍵詞
+    if len(all_related_keywords) < 3:
+        combined_text = query_text + " " + compared_text
+        more_keywords = jieba.analyse.extract_tags(combined_text, topK=50)
+        # 找出與主題可能相關的詞
+        for kw in more_keywords:
+            if any(topic_kw in kw or kw in topic_kw for topic_kw in topic_keywords):
+                all_related_keywords.append(kw)
+    
+    # 生成維度的語義解釋
+    semantic_meaning = {
+        "theme": top_topic,
+        "relevance_score": float(score),
+        "keywords": all_related_keywords[:10],
+        "description": f"該維度主要捕捉「{top_topic}」相關的語義特徵"
+    }
+    
+    # 如果有足夠的相關關鍵詞，生成更詳細的解釋
+    if len(all_related_keywords) >= 3:
+        semantic_meaning["detailed_explanation"] = f"在兩段文本中，該維度捕捉到的共同主題是「{top_topic}」，相關詞彙包括「{', '.join(all_related_keywords[:5])}」等。"
+    
+    return semantic_meaning
+
+# 添加維度語義分析報告生成函數
+def generate_dimension_semantic_report(similarity_df, output_path):
+    """生成維度語義分析報告"""
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import os
+    from collections import Counter
+    
+    # 創建報告資料夾
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    
+    # 提取所有維度語義主題
+    all_themes = []
+    for semantic_meaning in similarity_df['dimension_semantic_meaning']:
+        if isinstance(semantic_meaning, str) and semantic_meaning:
+            # 嘗試從文本中提取主題
+            import re
+            themes = re.findall(r'主題「([^」]+)」', semantic_meaning)
+            all_themes.extend(themes)
+    
+    # 計算主題頻率
+    theme_counts = Counter(all_themes)
+    
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write("# 向量維度語義分析報告\n\n")
+        
+        f.write("## 總體統計\n\n")
+        f.write(f"- 總分析案例數: {len(similarity_df)}\n")
+        f.write(f"- 平均報告相似度: {similarity_df['similarity_score'].mean():.4f}\n")
+        f.write(f"- 平均餘弦相似度: {similarity_df['cosine_similarity'].mean():.4f}\n\n")
+        
+        # 分析主要語義主題
+        f.write("## 主要語義主題\n\n")
+        f.write("以下是在向量維度中發現的主要語義主題:\n\n")
+        f.write("| 主題 | 出現次數 | 百分比 |\n")
+        f.write("|------|----------|--------|\n")
+        
+        for theme, count in theme_counts.most_common(15):
+            percentage = count / len(similarity_df) * 100
+            f.write(f"| {theme} | {count} | {percentage:.2f}% |\n")
+        
+        # 分析高相似度案例的維度語義
+        f.write("\n## 高相似度案例的維度語義分析 (Top 10)\n\n")
+        high_similarity = similarity_df[similarity_df['similarity_score'] > 0.7].copy()
+        for i, row in high_similarity.sort_values('similarity_score', ascending=False).head(10).iterrows():
+            f.write(f"### 案例 {i+1} (相似度: {row['similarity_score']:.4f})\n\n")
+            f.write(f"- 推薦委員: {row['recommended_manager']}\n")
+            f.write(f"- 餘弦相似度: {row['cosine_similarity']:.4f}\n")
+            f.write(f"- 共同關鍵詞: {row['common_keywords']}\n\n")
             
+            # 顯示維度語義解釋
+            f.write("**維度語義解釋:**\n\n")
+            if isinstance(row['dimension_semantic_meaning'], str) and row['dimension_semantic_meaning']:
+                f.write("```\n")
+                f.write(row['dimension_semantic_meaning'])
+                f.write("\n```\n\n")
+            else:
+                f.write("無維度語義解釋\n\n")
+            
+            # 顯示相似度因素
+            f.write("**相似度因素:**\n\n")
+            if isinstance(row['similarity_factors'], str) and row['similarity_factors']:
+                factors = row['similarity_factors'].split(';')
+                for factor in factors:
+                    f.write(f"- {factor.strip()}\n")
+            else:
+                f.write("無相似度因素\n")
+            
+            f.write("\n**分析摘要:**\n\n")
+            f.write(f"{row['vector_analysis_summary']}\n\n")
+            
+            # 顯示部分原文
+            query_preview = row['query_text'][:200] + "..." if len(row['query_text']) > 200 else row['query_text']
+            compared_preview = row['compared_text'][:200] + "..." if len(row['compared_text']) > 200 else row['compared_text']
+            
+            f.write("**查詢文本預覽:**\n\n")
+            f.write(f"{query_preview}\n\n")
+            f.write("**比較文本預覽:**\n\n")
+            f.write(f"{compared_preview}\n\n")
+            f.write("---\n\n")
+        
+        # 分析主題與相似度的關係
+        f.write("\n## 語義主題與相似度的關係\n\n")
+        f.write("| 主題 | 平均相似度 | 出現次數 |\n")
+        f.write("|------|------------|----------|\n")
+        
+        theme_scores = {}
+        theme_counts = {}
+        
+        # 從dimension_semantic_meaning欄位中提取主題和相似度
+        for i, row in similarity_df.iterrows():
+            score = row['similarity_score']
+            semantic_meaning = row['dimension_semantic_meaning']
+            
+            if isinstance(semantic_meaning, str) and semantic_meaning:
+                import re
+                themes = re.findall(r'主題「([^」]+)」', semantic_meaning)
+                
+                for theme in themes:
+                    if theme not in theme_scores:
+                        theme_scores[theme] = []
+                    theme_scores[theme].append(score)
+                    theme_counts[theme] = theme_counts.get(theme, 0) + 1
+        
+        # 計算每個主題的平均分數
+        for theme in theme_scores:
+            avg_score = np.mean(theme_scores[theme])
+            count = theme_counts[theme]
+            f.write(f"| {theme} | {avg_score:.4f} | {count} |\n")
+    
+    # 生成主題分佈圖
+    plt.figure(figsize=(12, 8))
+    theme_labels = [theme for theme, _ in Counter(all_themes).most_common(10)]
+    theme_values = [count for _, count in Counter(all_themes).most_common(10)]
+    
+    plt.barh(range(len(theme_labels)), theme_values)
+    plt.yticks(range(len(theme_labels)), theme_labels)
+    plt.xlabel('出現次數')
+    plt.title('主要語義主題分佈')
+    plt.tight_layout()
+    plt.savefig(os.path.splitext(output_path)[0] + '_semantic_themes.png')
+    plt.close()
+    
+    # 生成主題與相似度的關係圖
+    plt.figure(figsize=(10, 6))
+    theme_names = []
+    theme_avg_scores = []
+    theme_counts_list = []
+    
+    for theme, scores in theme_scores.items():
+        if len(scores) >= 5:  # 只考慮出現次數足夠的主題
+            theme_names.append(theme)
+            theme_avg_scores.append(np.mean(scores))
+            theme_counts_list.append(len(scores))
+    
+    # 按平均分數排序
+    sorted_indices = np.argsort(theme_avg_scores)[::-1]
+    sorted_themes = [theme_names[i] for i in sorted_indices]
+    sorted_scores = [theme_avg_scores[i] for i in sorted_indices]
+    sorted_counts = [theme_counts_list[i] for i in sorted_indices]
+    
+    # 限制顯示的主題數量
+    max_themes = min(15, len(sorted_themes))
+    
+    plt.bar(range(max_themes), sorted_scores[:max_themes], alpha=0.7)
+    plt.xticks(range(max_themes), sorted_themes[:max_themes], rotation=45, ha='right')
+    plt.ylabel('平均相似度')
+    plt.title('主題與相似度的關係')
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    plt.savefig(os.path.splitext(output_path)[0] + '_theme_similarity.png')
+    plt.close()
+    
+    print(f"維度語義分析報告已保存至: {output_path}")
+        
             
 def draw_color_for_similarity_score(writer, tab, output_excel):
     
