@@ -68,12 +68,12 @@ def select_the_file_update_project_name(setting_data):
         if file_path:
             file_path = os.path.abspath(file_path)
             if file_path.startswith(base_directory):
+                relative_path = os.path.relpath(file_path, base_directory)
                 file_name = os.path.basename(file_path)
                 if current_aim == '研究計畫':
-                    setting_data['SOURCE']['data']['research_proj']['研究計畫申請名冊'] = file_name
+                    setting_data['SOURCE']['data']['research_proj']['研究計畫申請名冊'] = relative_path
                 elif current_aim == '產學合作':
-                    setting_data['SOURCE']['data']['industry_coop']['產學合作申請名冊'] = file_name
-                    
+                    setting_data['SOURCE']['data']['industry_coop']['產學合作申請名冊'] = relative_path
                 file_name_only = os.path.splitext(file_name)[0]
                 setting_data['OUTPUT']['data']['output']['FINAL_COMMITTEE'] = file_name_only + "_推薦表統合_VBA.xlsx"
                 messagebox.showinfo("成功", f"已更新檔案名稱為: {file_name}")

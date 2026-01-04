@@ -38,7 +38,12 @@ def load_into_chroma_bge_manager(is_industry=False):
     client = chromadb.PersistentClient(path=chroma_db_path)
     collection_name = chroma_db_key
     
-    client.delete_collection(collection_name)
+    try:
+        client.delete_collection(collection_name)
+        print(f"已清理舊的 Collection: {collection_name}")
+    except ValueError:
+        # 如果找不到該 Collection，代表是第一次執行，直接跳過即可
+        print(f"Collection {collection_name} 不存在，將建立新的。")
     collection = client.create_collection(collection_name)
 
     # Retrieve the relevant dataframes based on the industry flag
