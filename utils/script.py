@@ -147,7 +147,7 @@ def search_v3(is_industry=False):
     
     filter_fields = required_fields + [f for f in other_fields if f not in required_fields]
 
-    RECOMMAND_AMOUNT = 20   # 要推薦的委員數量
+    RECOMMAND_AMOUNT = 10   # 要推薦的委員數量
     SELECT_AMOUNT = 3       # 要選擇的委員數量
     SELECT_BOX_SYMBOL = ['Y', 'Z', 'AA']
 
@@ -181,10 +181,10 @@ def search_v3(is_industry=False):
 
             for i in range(RECOMMAND_AMOUNT):
                 df['推薦委員' + str(i + 1)] = ''
-                # df['相關分數' + str(i + 1)] = ''
-            # df['前任委員占比'] = ''
-            # for i in range(SELECT_AMOUNT):
-                # df['選取委員' + str(i + 1)] = ''
+                df['相關分數' + str(i + 1)] = ''
+            df['前任委員占比'] = ''
+            for i in range(SELECT_AMOUNT):
+                df['選取委員' + str(i + 1)] = ''
 
             # process data
             for i in tqdm.tqdm(range(len(df)), desc=tab):
@@ -224,10 +224,10 @@ def search_v3(is_industry=False):
                 for j, (doc, score) in enumerate(documents):
                     df.loc[df.index[i], '推薦委員' + str(j + 1)] = doc.metadata['manager']
                     manager_list.append(doc.metadata['manager'])
-                    # df.loc[df.index[i], '相關分數' + str(j + 1)] = score
+                    df.loc[df.index[i], '相關分數' + str(j + 1)] = score
 
                 page_manager_list.append(manager_list)
-                # df.loc[df.index[i], '前任委員占比'] = len([x for x in manager_list if x in former_manager]) / RECOMMAND_AMOUNT
+                df.loc[df.index[i], '前任委員占比'] = len([x for x in manager_list if x in former_manager]) / RECOMMAND_AMOUNT
 
             df.to_excel(writer, sheet_name=tab, index=False)
 
@@ -349,7 +349,7 @@ def statistic_committee():
                 '名稱': row['計畫主持人'],
                 '年份': year,
                 '機關名稱': row['機關名稱'],
-                '職稱': row['職稱'],
+                '職稱': row.get('職稱', '教授'),
                 "來源": f"研究計劃（申請案件）- {current_sheet}"
             })
         
@@ -363,7 +363,7 @@ def statistic_committee():
                 '名稱': row['計畫主持人'],
                 '年份': year,
                 '機關名稱': row['機關名稱'],
-                '職稱': row.get('職稱', '教授'), # 應該要給
+                '職稱': row.get('職稱', '教授'),
                 "來源": f"研究計劃（統計案件）- {current_sheet}"
             })
             
@@ -378,6 +378,8 @@ def statistic_committee():
         })
     
     committee_person_RDF_df = pd.DataFrame(committee_person_RDF)
+    mask = (committee_person_RDF_df['機關名稱'].notna()) & (committee_person_RDF_df['機關名稱'] != '')
+    committee_person_RDF_df = committee_person_RDF_df[mask]
     committee_person_RDF_df[['學校', '系所']] = committee_person_RDF_df['機關名稱'].apply(split_institution)
     committee_person_RDF_df = committee_person_RDF_df.sort_values(by=["名稱"])
     committee_person_RDF_df.to_excel(find_key_path("統計清單人才資料_RDF"), index=False)
@@ -474,6 +476,7 @@ def filter_committee(is_industry=False):
                     # 找到關聯性
                     project_manager_school = list([find_crawler_person_relative_school(name, crawler_RDF_data) for name, department in common_joint_list])
                     apply_school = {
+                        "申請人名稱": row.get(value_of_key("申請主持人欄位名稱"), ''),
                         "申請人職稱": row.get(value_of_key("職稱"), ''),
                         "計畫申請學校": split_institution(row.get(value_of_key("申請機構欄位名稱"), ''))[0], 
                         "共同計畫主持的學校": [split_institution(department)[0] for name, department in common_joint_list],
@@ -499,6 +502,7 @@ def filter_committee(is_industry=False):
                             "是否過濾申請人": True if is_industry else False,
                             "是否過濾相同學校": True,
                             "是否過濾職稱": True,
+                            "是否過濾掉自身" : True
                         }
                     )
                     total_committee_person_dict_result = merge_committee_advanced(total_committee_person_dict_result, current_committee_person_dict_result)
@@ -510,17 +514,10 @@ def filter_committee(is_industry=False):
             # final_committee_person_list = [item for item in committee_person_dict["Remaining Members"][:3]]
             # for index, name in enumerate(final_committee_person_list):
             #     statistical_row[f"選取委員{index+1}"] = name
-            remaining_names = total_committee_person_dict_result["Remaining Members"]
-            for i in range(1, 11):
-                statistical_row[f'推薦委員{i}'] = ""
             
-            # 3. 將留下的委員依序填回
-            for i, name in enumerate(remaining_names):
-                if i < 7:  # 確保不超過原本的欄位數量
-                    statistical_row[f'推薦委員{i+1}'] = name
             #- Reason
-            # statistical_row["篩掉人員"] = total_committee_person_dict_result["Filtered Members"]
-            # statistical_row["篩選原因"] = total_committee_person_dict_result["Filter Reasons"]
+            statistical_row["篩掉人員"] = total_committee_person_dict_result["Filtered Members"]
+            statistical_row["篩選原因"] = total_committee_person_dict_result["Filter Reasons"]
             
             result_dict.append(statistical_row)
             
@@ -607,14 +604,14 @@ def excel_process_VBA():
     print("[起頭] 第 {} 欄之標題為：{}".format(start_index, header_value))
 
     # 檢查 AB, 滿足條件改色
-    # for row in committee_sheet.iter_rows(min_row=2, max_col=committee_sheet.max_column):
-    #     filter_list = ast.literal_eval(row[-2].value)
+    for row in committee_sheet.iter_rows(min_row=2, max_col=committee_sheet.max_column):
+        filter_list = ast.literal_eval(row[-2].value)
         
-    #     #- 若有重複的的部分進行圖色（篩選委員）
-    #     for col_letter in letter_index:
-    #         col_index = column_index_from_string(col_letter) - 1
-    #         if row[col_index].value in filter_list:
-    #             row[col_index].fill = pink_fill
+        #- 若有重複的的部分進行圖色（篩選委員）
+        for col_letter in letter_index:
+            col_index = column_index_from_string(col_letter) - 1
+            if row[col_index].value in filter_list:
+                row[col_index].fill = pink_fill
 
     # 保存
     committee_workbook.save(find_key_path("FINAL_COMMITTEE"))

@@ -1,6 +1,7 @@
 import pandas as pd
 from langchain_community.embeddings import HuggingFaceEmbeddings
-import chromadb # 直接使用 chromadb 原生套件
+from langchain_community.vectorstores import Chroma
+from langchain_core.documents import Document
 import os
 import shutil
 import tqdm
@@ -11,7 +12,7 @@ model_kwargs = {'device': 'cpu'}
 encode_kwargs = {'normalize_embeddings': True}
 
 print("正在載入模型...")
-model = HuggingFaceEmbeddings(
+embedding_model = HuggingFaceEmbeddings(
     model_name=model_name,
     model_kwargs=model_kwargs,
     encode_kwargs=encode_kwargs,
@@ -67,116 +68,140 @@ def load_data(file_path, pages):
         
     return authors_dict, projects_dict
 
-# --- 3. 儲存向量資料庫 (手動暴力版) ---
-def store_vector_db(chroma_db_path, authors_dict, projects_dict, batch_size=50):
-    # 強制刪除舊資料庫
+# --- 3A. 儲存 Basic 資料庫 (Title, Keywords) ---
+def store_basic_db(chroma_db_path, authors_dict, embedding_model):
+    print(f"\n🔵 正在處理 Basic 資料庫 (Title/Keywords) -> {chroma_db_path}")
+    
+    # 清理舊資料夾
     if os.path.exists(chroma_db_path):
-        print(f"正在刪除舊資料庫 (確保乾淨): {chroma_db_path}")
         try:
             shutil.rmtree(chroma_db_path)
+            print("  已刪除舊資料夾")
         except Exception as e:
-            print(f"⚠️ 無法刪除資料夾 (可能被佔用): {e}")
+            print(f"  ⚠️ 無法刪除資料夾: {e}")
             return
 
-    os.makedirs(chroma_db_path, exist_ok=True)
-    
-    # 初始化 ChromaDB Client
-    client = chromadb.PersistentClient(path=chroma_db_path)
-    
-    collection_names = ['title', 'keywords', 'application_directions', 'problems_to_solve', 'goals_to_achieve', 'methods_to_solve']
-    abstract_names = ['application_directions', 'problems_to_solve', 'goals_to_achieve', 'methods_to_solve']
-    
-    # 準備資料容器
-    data_buckets = {name: {'ids': [], 'docs': [], 'metas': []} for name in collection_names}
+    # 準備資料
+    data_store = {
+        'title': {'docs': [], 'ids': []},
+        'keywords': {'docs': [], 'ids': []}
+    }
 
-    print("正在整理資料...")
-    # 整理 Authors
-    for key, value in tqdm.tqdm(authors_dict.items(), desc=f"正在整理資料..."):
-        manager = key # 您的 ID
-        
+    # 整理 Authors 資料
+    for manager, value in tqdm.tqdm(authors_dict.items(), desc="Processing Basic Info"):
+        # Title
         title_text = "\n".join([t for t in value.get('title', []) if t])
         if title_text:
-            data_buckets['title']['ids'].append(manager)
-            data_buckets['title']['docs'].append(title_text)
-            data_buckets['title']['metas'].append({'manager': manager})
-            
+            doc = Document(page_content=title_text, metadata={'manager': manager, 'type': 'title'})
+            data_store['title']['docs'].append(doc)
+            data_store['title']['ids'].append(manager)
+
+        # Keywords
         keywords_text = "\n".join([t for t in value.get('keywords', []) if t])
         if keywords_text:
-            data_buckets['keywords']['ids'].append(manager)
-            data_buckets['keywords']['docs'].append(keywords_text)
-            data_buckets['keywords']['metas'].append({'manager': manager})
+            doc = Document(page_content=keywords_text, metadata={'manager': manager, 'type': 'keywords'})
+            data_store['keywords']['docs'].append(doc)
+            data_store['keywords']['ids'].append(manager)
 
-    # 整理 Projects
-    for key, value in tqdm.tqdm(projects_dict.items(), desc=f"正在整理資料..."):
-        title = key # 您的 ID
+    # 寫入 ChromaDB
+    for col_name, data in data_store.items():
+        docs = data['docs']
+        ids = data['ids']
+        
+        if not docs: continue
+            
+        print(f"  正在建立 Collection: {col_name} (共 {len(docs)} 筆)...")
+        try:
+            Chroma.from_documents(
+                documents=docs,
+                embedding=embedding_model,
+                persist_directory=chroma_db_path,
+                collection_name=col_name,
+                ids=ids
+            )
+            print(f"  ✅ {col_name} 儲存成功。")
+        except Exception as e:
+            print(f"  ❌ {col_name} 儲存失敗: {e}")
+
+# --- 3B. 儲存 Abstract 資料庫 (長文本) ---
+def store_abstract_db(chroma_db_path, projects_dict, embedding_model):
+    print(f"\n🟠 正在處理 Abstract 資料庫 (長文本) -> {chroma_db_path}")
+    
+    # 清理舊資料夾
+    if os.path.exists(chroma_db_path):
+        try:
+            shutil.rmtree(chroma_db_path)
+            print("  已刪除舊資料夾")
+        except Exception as e:
+            print(f"  ⚠️ 無法刪除資料夾: {e}")
+            return
+
+    # 準備資料
+    data_store = {
+        'application_directions': {'docs': [], 'ids': []},
+        'problems_to_solve': {'docs': [], 'ids': []},
+        'goals_to_achieve': {'docs': [], 'ids': []},
+        'methods_to_solve': {'docs': [], 'ids': []}
+    }
+    
+    abstract_names = ['application_directions', 'problems_to_solve', 'goals_to_achieve', 'methods_to_solve']
+
+    # 整理 Projects 資料 (這裡我幫你把原本註解掉的迴圈打開了)
+    for title, value in tqdm.tqdm(projects_dict.items(), desc="Processing Abstracts"):
         manager = value.get('manager', '')
-        meta = {'title': title, 'manager': manager}
         
         for name in abstract_names:
             text_content = value.get(name)
             if text_content and isinstance(text_content, str) and text_content.strip():
-                data_buckets[name]['ids'].append(title)
-                data_buckets[name]['docs'].append(text_content)
-                data_buckets[name]['metas'].append(meta)
-
-    # --- 核心修改：手動計算並寫入 ---
-    print("🚀 開始計算向量並寫入 ChromaDB...")
-    
-    for name, data in data_buckets.items():
-        ids = data['ids']
-        docs = data['docs']
-        metas = data['metas']
-        total = len(ids)
-        
-        if total == 0:
-            continue
-            
-        # 建立 Collection (指定 cosine 距離)
-        collection = client.create_collection(name=name, metadata={"hnsw:space": "cosine"})
-        
-        print(f"正在處理 Collection: {name} (共 {total} 筆)")
-        
-        # 批次處理
-        for i in tqdm.tqdm(range(0, total, batch_size), desc=f"Store {name}"):
-            batch_ids = ids[i : i + batch_size]
-            batch_docs = docs[i : i + batch_size]
-            batch_metas = metas[i : i + batch_size]
-            
-            # 1. 手動計算向量 (這裡保證會有向量！)
-            try:
-                batch_embeddings = model.embed_documents(batch_docs)
-            except Exception as e:
-                print(f"❌ 計算向量失敗: {e}")
-                continue
-            
-            # 檢查向量是否真的算出來了
-            if not batch_embeddings or len(batch_embeddings) == 0:
-                print("❌ 警告：算出空向量！")
-                continue
                 
-            # 2. 手動寫入 (明確傳入 embeddings)
-            collection.upsert(
-                ids=batch_ids,
-                documents=batch_docs,
-                metadatas=batch_metas,
-                embeddings=batch_embeddings # <--- 關鍵：絕對不能少
-            )
+                doc = Document(
+                    page_content=text_content,
+                    metadata={'title': title, 'manager': manager, 'field': name}
+                )
+                data_store[name]['docs'].append(doc)
+                data_store[name]['ids'].append(title)
+
+    # 寫入 ChromaDB
+    for col_name, data in data_store.items():
+        docs = data['docs']
+        ids = data['ids']
+        
+        if not docs: continue
             
-    print("✅ 所有資料寫入完成。")
+        print(f"  正在建立 Collection: {col_name} (共 {len(docs)} 筆)...")
+        try:
+            Chroma.from_documents(
+                documents=docs,
+                embedding=embedding_model,
+                persist_directory=chroma_db_path,
+                collection_name=col_name,
+                ids=ids
+            )
+            print(f"  ✅ {col_name} 儲存成功。")
+        except Exception as e:
+            print(f"  ❌ {col_name} 儲存失敗: {e}")
 
 def main():
     store_file_path = 'data/research_proj/115計算機學門審查/pass_project_with_abstract.xlsx'
+    
     if not os.path.exists(store_file_path):
         print(f"找不到檔案: {store_file_path}")
         return
 
     years = ['108','109','110','111','112','113','114']
+    
+    # 1. 讀取資料
     authors_dict, projects_dict = load_data(store_file_path, years)
     
-    chroma_db_path = "database/vectorstore_weight_v3"
-    store_vector_db(chroma_db_path, authors_dict, projects_dict)
+    # 2. 定義兩個不同的資料庫路徑
+    path_basic = "database/vectorstore_basic"       # 存 Title, Keywords
+    path_abstract = "database/vectorstore_abstract" # 存 Abstracts
     
-    print('---finish---')
+    # 3. 分別執行儲存
+    store_basic_db(path_basic, authors_dict, embedding_model)
+    store_abstract_db(path_abstract, projects_dict, embedding_model)
+    
+    print('\n🎉 --- All Finished ---')
 
 if __name__ == "__main__":
     main()

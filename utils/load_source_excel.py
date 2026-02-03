@@ -35,7 +35,29 @@ def get_project_df() -> List[pd.DataFrame]:
                 
         apply_project_df['通過'] = pass_list  
         result_df[year] = apply_project_df
-    
+    all_project_file_with_pass = 'data/research_proj/all_project.xlsx'
+
+    # 確保至少有一個工作表被創建
+    with pd.ExcelWriter(all_project_file_with_pass) as writer:
+        sheets_created = False
+        
+        # 嘗試為每個年份創建工作表
+        for year in apply_project_file_year:
+            try:
+                if year in result_df:
+                    result_df[year].to_excel(writer, sheet_name=str(year), index=False)
+                    sheets_created = True
+                    print(f"已創建 {year} 年度的工作表")
+                else:
+                    print(f"警告: result_df 中找不到 {year} 年度的資料")
+            except Exception as e:
+                print(f"處理 {year} 年度時出錯: {e}")
+        
+        # 如果沒有創建任何工作表，則創建一個空白工作表
+        if not sheets_created:
+            print("沒有找到任何年度的資料，創建一個空白工作表")
+            pd.DataFrame().to_excel(writer, sheet_name="空白工作表", index=False)
+    print("所有年度的資料已成功寫入到 all_project.xlsx")
     return result_df
 
 def get_industry_coop_proj():
