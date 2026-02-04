@@ -54,7 +54,8 @@ def load_data(file_path, pages):
                 'application_directions': row.get('application_directions', ''),
                 'problems_to_solve': row.get('problems_to_solve', ''),
                 'goals_to_achieve': row.get('goals_to_achieve', ''),
-                'methods_to_solve': row.get('methods_to_solve', '')
+                'methods_to_solve': row.get('methods_to_solve', ''),
+                'school': row['機關名稱']
             }
     return apply_dicts
 
@@ -179,7 +180,6 @@ def main():
             
             for doc, score in documents:
                 recommended_manager = doc.metadata.get('manager', 'Unknown')
-                
                 # 建立結果物件
                 candidate_info = {
                     "project": project_title,           # 申請的計畫
@@ -189,6 +189,7 @@ def main():
                     "recommended_manager": recommended_manager, # 推薦的審查人
                     "similarity_score": score,
                     "matched_doc_id": doc.metadata.get('title', 'N/A'), # 對應到的過往計畫標題(如果是Abstract)
+                    "school": project_info['school'],
                     "collection_field": col_name
                 }
 
