@@ -1,100 +1,65 @@
 import pandas as pd
 import os
 
+# --- 1. 讀取評分結果 ---
 def load_data(file_path, pages):
-    page_data = {}  # 初始化字典
+    page_data = {}
     target_cols = ['project', 'manager', 'similarity_score', 'recommended_manager', 'school']
+    
     for page in pages:
         try:
             df = pd.read_excel(file_path, sheet_name=page, dtype=str).fillna("")
-            page_data[page] = df[target_cols]
-            
-        except KeyError as e:
-            print(f"頁面 {page} 缺少欄位: {e}")
-            continue
+            available_cols = [c for c in target_cols if c in df.columns]
+            page_data[page] = df[available_cols]
         except Exception as e:
             print(f"跳過頁面 {page}: {e}")
             continue
-        
     return page_data
-
-def save_results_to_excel(results, output_filename="data/output/recommendation_results.xlsx"):
-    excel_rows = []
-
-    for project, managers in results.items():
-        # 1. 每一列 (Row) 的基本資料
-        row_data = {
-            "Project": project,
-            'Manager': managers['manager'],
-            "School": managers['school']
-        }
-        
-        # 2. 動態產生推薦欄位
-        # managers 是一個 list: [('王小明', 0.8), ('李大同', 0.6)...]
-        for i, (manager_name, score) in enumerate(managers['recommand_managers']):
-            if i == 10:
-                break
-            rank = i + 1  # 排名從 1 開始
-            
-            # 建立欄位名稱: Recommend 1, Score 1, Recommend 2, Score 2...
-            row_data[f"Recommend {rank}"] = manager_name
-            row_data[f"Score {rank}"] = score
-            
-        excel_rows.append(row_data)
-
-    # 3. 轉成 DataFrame
-    df = pd.DataFrame(excel_rows)
-
-    # 4. 存成 Excel
-    df.to_excel(output_filename, index=False)
-    print(f"檔案已儲存至: {output_filename}")
 
 def group_by_project_dict(datas, pages):
     results = {}
-    
     for page in pages:
+        if page not in datas: continue
         df = datas[page]
         rows = df.to_dict('records') 
         for row in rows:
             project_name = row.get('project')
-            
-            if not project_name:
-                continue
+            if not project_name: continue
             if project_name not in results:
                 results[project_name] = {}
             if page not in results[project_name]:
                 results[project_name][page] = [] 
             results[project_name][page].append(row)
-            
     return results
 
+# --- 2. 計算加權分數 ---
 def calculate_score(data):
-    # 定義權重表
     weights = {
-        'title': 1,
-        'keyword': 1,
-        'application_directions': 3,
-        'problems_to_solve': 3,
-        'goals_to_achieve': 1,
-        'methods_to_solve': 1
+        'title': 1, 'keyword': 1,
+        'application_directions': 3, 'problems_to_solve': 3,
+        'goals_to_achieve': 1, 'methods_to_solve': 1
     }
     total_weight_sum = sum(weights.values())
     final_results = {}
+
     for project_name, pages_data in data.items():
-        manager_scores = {} # 用來暫存該專案下每位教授的分數
+        manager_scores = {}
+        applicant_manager = ""
+        applicant_school = ""
         
         for page, rows in pages_data.items():
             weight = weights.get(page, 0)
-            
-            if weight == 0:
-                continue
+            if weight == 0: continue
 
             for row in rows:
-                manager = row.get('recommended_manager')
+                if not applicant_manager:
+                    applicant_manager = row.get('manager', '')
+                    applicant_school = row.get('school', '')
+
+                rec_manager = row.get('recommended_manager')
                 score_str = row.get('similarity_score', 0)
                 
-                if not manager:
-                    continue
+                if not rec_manager: continue
 
                 try:
                     score = float(score_str)
@@ -103,163 +68,147 @@ def calculate_score(data):
                 
                 weighted_score = score * weight
                 
-                if manager not in manager_scores:
-                    manager_scores[manager] = 0
+                if rec_manager not in manager_scores:
+                    manager_scores[rec_manager] = 0
                 
-                manager_scores[manager] += weighted_score
+                manager_scores[rec_manager] += weighted_score
         
-        for manager in manager_scores:
-            manager_scores[manager] = manager_scores[manager] / total_weight_sum
-        sorted_managers = sorted(manager_scores.items(), key=lambda x: x[1], reverse=True)
+        candidates_list = []
+        for manager, raw_score in manager_scores.items():
+            final_score = raw_score / total_weight_sum
+            candidates_list.append({
+                'name': manager,
+                'score': final_score
+            })
+            
+        # 依照分數由大到小排序
+        candidates_list.sort(key=lambda x: x['score'], reverse=True)
         
         final_results[project_name] = {
-            'manager': row.get('manager'),
-            'school': row.get('school'),
-            'recommand_managers':sorted_managers,
-            
+            'manager': applicant_manager,
+            'school': applicant_school,
+            'candidates': candidates_list # 這是未過濾的原始名單
         }
 
     return final_results
 
-def filter_committee_advanced(
-        schools_info, 
-        committee_members, 
-        filter_pairs, 
-        apply_member_list=None, 
-        TITLE_RESTRICTIONS={},
-        whether_to_execute_the_option={
-            "是否過濾申請人": True,
-            "是否過濾相同學校": True,
-            "是否過濾職稱": True
+# --- 3. 存檔函式 (修改：增加 key_name 參數) ---
+def save_results_to_excel(results, output_filename, key_name='final_candidates'):
+    """
+    key_name: 指定要從 results 裡讀取哪個名單
+              'candidates' -> 原始名單
+              'final_candidates' -> 過濾後名單
+    """
+    excel_rows = []
+
+    for project, info in results.items():
+        row_data = {
+            "Project": project,
+            'Manager': info['manager'],
+            "School": info['school']
         }
-    ):
-    """
-    進階過濾委員名單，根據具體的配對關係進行過濾，並提供過濾的具體原因。
-
-    :param schools_info: 包含學校相關資訊的字典
-    :param committee_members: 包含委員相關資訊的列表
-    :param filter_pairs: 列表，包含過濾配對條件，例如 [("申請學校", "就職學校")]
-    :param apply_member_list: 申請人名單，若提供則優先過濾
-    :param TITLE_RESTRICTIONS: 職稱過濾規則的字典
-    
-    :return: 一個字典，包含過濾前後的委員名單和未過濾的委員名單，以及過濾原因
-    """
-    
-    filtered_members = set()
-    filter_reasons = {}
-    # 1. (若篩選委員有申請人，則刪除) => 如果有提供 apply_member_list，先將該列表中的委員優先篩選掉
-    if apply_member_list and whether_to_execute_the_option["是否過濾申請人"]:
-        for member in committee_members:
-            if member['委員名稱'] in apply_member_list:
-                filtered_members.add(member['委員名稱'])
-                filter_reasons[member['委員名稱']] = f"委員名稱 {member['委員名稱']} 出現在申請人之中"
-
-    #  2. 根據配對條件進行過濾（例如 (計畫申請學校, 委員曾就職學校) 等）
-    if whether_to_execute_the_option["是否過濾相同學校"]:
-        for school_type, member_field in filter_pairs:
-            if school_type in schools_info and schools_info[school_type]:
-                school_list = schools_info[school_type] if isinstance(schools_info[school_type], list) else [schools_info[school_type]]
-                print(schools_info["申請人名稱"])
-                print(school_list)
-                for member in committee_members:
-                    print(member['委員名稱'])
-                    print(member[member_field])
-                    matching_schools = [school for school in member[member_field] if school in school_list and school]
-                    if matching_schools:
-                        filtered_members.add(member['委員名稱'])
-                        filter_reasons[member['委員名稱']] = f"{school_type} 與 {member_field} ({', '.join(matching_schools)}) 重疊"
-                print('----')
-    # 3. 根據職稱進行過濾
-    if whether_to_execute_the_option["是否過濾職稱"]:
-        for member in committee_members:
-            if member['委員名稱'] in filtered_members:
-                continue  # 若已被篩選，不再處理
+        
+        # 根據傳入的 key_name 抓取對應的名單
+        valid_candidates = info.get(key_name, [])
+        
+        for i, candidate in enumerate(valid_candidates):
+            if i >= 10: break # 只取前 10 名
+            rank = i + 1
+            row_data[f"Recommend {rank}"] = candidate['name']
+            row_data[f"Score {rank}"] = candidate['score']
+            row_data[f"Rec_School {rank}"] = candidate.get('school', '') 
             
-            applicant_title = str(schools_info.get("申請人職稱", "")).strip()
-            member_title = str(member.get("職稱", "")).strip()
+        excel_rows.append(row_data)
 
-            # 若該職稱有過濾規則，且申請人職稱在排除名單中
-            if member_title in TITLE_RESTRICTIONS and applicant_title in TITLE_RESTRICTIONS[member_title]:
-                filtered_members.add(member['委員名稱'])
-                filter_reasons[member['委員名稱']] = f"{member_title} 不能審查 {applicant_title}"
-
-    # 創建過濾後的委員名單
-    remaining_members = [member['委員名稱'] for member in committee_members if member['委員名稱'] not in filtered_members]
-
-    # 返回結果
-    return {
-        'Filtered Members': list(filtered_members),
-        'Remaining Members': remaining_members,
-        'Filter Reasons': filter_reasons
-    }
-    
-def get_clean_school_name(school):
-    # 定義關鍵字列表 (注意：順序很重要，程式會以先找到的為主)
-    keywords = ['大學', '院', '博物館', '學校', '法人']
-    
-    # 預設結果等於原始名稱 (萬一都沒對到關鍵字，就保留原樣)
-    final_name = school
-
-    for kw in keywords:
-        if kw in school:
-            final_name = school.split(kw)[0] + kw
-            break 
-            
-    return final_name
+    df = pd.DataFrame(excel_rows)
+    df.to_excel(output_filename, index=False)
+    print(f"檔案已儲存至: {output_filename}")
 
 def main():
-    input_file = 'data/output/result_score.xlsx'
+    input_score_file = 'data/output/result_score.xlsx'
+    committee_uni_file = 'data/RDF_database/commitee_uni.xlsx'
+    blacklist_csv_path = 'data/retiree_blacklist.csv'
     
-    if not os.path.exists(input_file):
-        print(f"找不到檔案: {input_file}")
+    if not os.path.exists(input_score_file):
+        print(f"找不到評分檔案: {input_score_file}")
         return
 
+    # 1. 計算分數
+    print("正在讀取評分資料...")
     pages = ['title', 'keywords', 'application_directions', 'problems_to_solve', 'goals_to_achieve', 'methods_to_solve']
-    
-    # 1. 讀取資料
-    org_data = load_data(input_file, pages) 
-    # print(org_data)
-    project_data = group_by_project_dict(org_data,pages)
-    # print(len(integrate_data['前瞻多模式多色階半色調技術之探究']['title']))
+    org_data = load_data(input_score_file, pages) 
+    project_data = group_by_project_dict(org_data, pages)
     result = calculate_score(project_data)
-    # print(result['前瞻多模式多色階半色調技術之探究'])
-    save_results_to_excel(result)
-    blacklist_csv_path = 'data/retiree_blacklist.csv'
-    blacklist_df = pd.read_csv(blacklist_csv_path, encoding='utf-8')
-    blacklist = blacklist_df['姓名'].tolist()
-    print(f"黑名單或是已退休委員:", blacklist)
 
-    person_path = 'data/RDF_database/統計清單人才資料_RDF_UNI.xlsx'
-    newest_person_df = pd.read_excel(person_path)
-    print(f"統計清單人才資料:", newest_person_df)
-    committee_person_dict = newest_person_df.set_index('名稱').to_dict('index')
-    filter_pairs = [("計畫申請學校", "委員曾就職學校")]
-    TITLE_RESTRICTIONS = {
-                        "助理教授": ["教授", "研究員"], # 助理教授不能審教授或研究員
-                        "助研究員": ["教授", "研究員"] # 助研究員不能審教授或研究員
-                    }
-    all_apply_members = []
+    # 2. 載入外部資料
+    print(f"正在讀取委員學校資料: {committee_uni_file}")
+    reviewer_school_map = {}
+    if os.path.exists(committee_uni_file):
+        try:
+            commitee_df = pd.read_excel(committee_uni_file, dtype=str).fillna("")
+            for _, row in commitee_df.iterrows():
+                name = str(row['名字']).strip()
+                school = str(row['學校']).strip()
+                if name:
+                    reviewer_school_map[name] = school
+            print(f"已載入委員學校資料: {len(reviewer_school_map)} 筆")
+        except Exception as e:
+            print(f"讀取委員資料失敗: {e}")
 
-    for project in result:
-        apply_school = {
-                        "申請人名稱": result[project]['manager'],
-                        "計畫申請學校": get_clean_school_name(result[project]['school'])
-                    }
-        current_committee_person_dict_result = filter_committee_advanced(
-            apply_school, 
-            committee_person_dict, 
-            filter_pairs, 
-            all_apply_members, 
-            TITLE_RESTRICTIONS,
-            whether_to_execute_the_option= {
-                "是否過濾申請人": False,
-                "是否過濾相同學校": True,
-                "是否過濾職稱": True,
-                "是否過濾掉自身" : True
-            }
-        )
-        print(current_committee_person_dict_result)
+    blacklist = []
+    if os.path.exists(blacklist_csv_path):
+        try:
+            blacklist_df = pd.read_csv(blacklist_csv_path, encoding='utf-8')
+            blacklist = blacklist_df['姓名'].astype(str).tolist()
+            print(f"已載入黑名單: {len(blacklist)} 人")
+        except Exception as e:
+            print(f"讀取黑名單失敗: {e}")
+
+    # ★★★ 3. 先存一份原始檔 (未過濾) ★★★
+    # 指定 key_name='candidates'，因為這時候還沒有 final_candidates
+    print("正在儲存原始名單...")
+    save_results_to_excel(result, 'data/output/recommendation_results_org.xlsx', key_name='candidates')
+
+    # 4. 執行過濾
+    print("正在執行過濾 (黑名單、本人、同校迴避)...")
     
+    for project_name, info in result.items():
+        applicant_name = info['manager']
+        applicant_school = info['school']
+        
+        filtered_candidates = []
+        
+        # 遍歷原始名單
+        for cand in info['candidates']:
+            cand_name = cand['name']
+            
+            # (A) 黑名單
+            if cand_name in blacklist:
+                continue
+                
+            # (B) 本人
+            if cand_name == applicant_name:
+                continue
+            
+            # (C) 同校
+            cand_school_raw = reviewer_school_map.get(cand_name, "")
+            cand['school'] = cand_school_raw 
+            
+            if applicant_school and cand['school']:
+                # 這裡建議還是加上簡單的清洗，避免 "國立台灣大學" != "台灣大學" 的問題
+                # 如果確定資料很乾淨可以不用
+                if applicant_school == cand['school']:
+                    continue
+            
+            filtered_candidates.append(cand)
+        
+        # 將過濾結果存入 final_candidates
+        info['final_candidates'] = filtered_candidates
+
+    # ★★★ 5. 存一份過濾後的檔案 ★★★
+    # 預設 key_name='final_candidates'
+    print("正在儲存過濾後名單...")
+    save_results_to_excel(result, 'data/output/recommendation_results_filter.xlsx', key_name='final_candidates')
 
 if __name__ == "__main__":
     main()

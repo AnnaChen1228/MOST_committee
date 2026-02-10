@@ -143,15 +143,15 @@ def compare_overlap(df1, df2):
     }
 
 def main():
-    # input_path = 'data/output/recommendation_results.xlsx'
-    # org_path = 'data/output/(勿對外公開資料或流傳)108-115年智慧計算學門大批專題計畫申請案件(含中英文摘要及關鍵字)_推薦表統合_VBA.xlsx'
-    # data = load_data(input_path)
-    # org_data = load_data(org_path)
-    # recommand_count = count_recommendations(data)
-    # average_score = calculate_average_similarity(data)
-    # print(average_score)
-    # save_data(recommand_count,'data/output/recommand_count.csv')
-    # count_fig(recommand_count, average_score)
+    input_path = 'data/output/recommendation_results_org.xlsx'
+    org_path = 'data/output/(勿對外公開資料或流傳)108-115年智慧計算學門大批專題計畫申請案件(含中英文摘要及關鍵字)_推薦表統合_VBA.xlsx'
+    data = load_data(input_path)
+    org_data = load_data(org_path)
+    recommand_count = count_recommendations(data)
+    average_score = calculate_average_similarity(data)
+    print(average_score)
+    save_data(recommand_count,'data/output/recommand_count.csv')
+    count_fig(recommand_count, average_score)
     # org_recommand_count = count_recommendations(org_data)
     # org_average_score = calculate_average_similarity(org_data)
     # print(org_average_score)
@@ -171,13 +171,13 @@ def main():
     # print(f"❌ 完全不同 (0%)  ： {result['no_match']} 案")
     # print("═"*40 + "\n")
 
-    item_data_file = 'data/output/result_score.xlsx'
-    pages = ['title', 'keywords', 'application_directions', 'problems_to_solve', 'goals_to_achieve', 'methods_to_solve']
-    item_data = load_data_by_page(item_data_file,pages)
-    avg = {}
-    for key,value in item_data.items():
-        avg[key] = calculate_average_similarity(value)
-    print(avg)
+    # item_data_file = 'data/output/result_score.xlsx'
+    # pages = ['title', 'keywords', 'application_directions', 'problems_to_solve', 'goals_to_achieve', 'methods_to_solve']
+    # item_data = load_data_by_page(item_data_file,pages)
+    # avg = {}
+    # for key,value in item_data.items():
+    #     avg[key] = calculate_average_similarity(value)
+    # print(avg)
 
 if __name__ == '__main__':
     main()
