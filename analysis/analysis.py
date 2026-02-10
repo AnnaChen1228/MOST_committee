@@ -142,6 +142,136 @@ def compare_overlap(df1, df2):
         "all_ratios": ratios
     }
 
+def analyze_long_format_overlap(item_data, top_n=10):
+    """
+    item_data: dict, 格式為 {'title': df, 'keywords': df, ...}
+    每個 df 必須包含 'project' 和 'recommended_manager' 欄位
+    """
+    pages = list(item_data.keys())
+    
+    # 1. 彙整每個案子在各個項目下的 Top N 推薦名單
+    # case_map[案名][項目] = set(前10名委員)
+    case_map = {}
+
+    for page in pages:
+        df = item_data[page]
+        
+        # 確保資料依照原始順序排列，然後按 project 分組
+        # 我們假設 Excel 裡的出現順序就是推薦權重順序
+        grouped = df.groupby('project', sort=False)
+        
+        for project_name, group in grouped:
+            if project_name not in case_map:
+                case_map[project_name] = {}
+            
+            # 提取推薦委員，過濾空值與重複值，保留前 N 個
+            # 使用 list(dict.fromkeys()) 是為了在去重時保持出現順序
+            raw_managers = group['recommended_manager'].dropna().astype(str).str.strip().tolist()
+            clean_managers = [m for m in raw_managers if m not in ["", "0", "nan", "None", "NaN"]]
+            
+            top_n_list = list(dict.fromkeys(clean_managers))[:top_n]
+            case_map[project_name][page] = set(top_n_list)
+
+    # 2. 計算兩兩項目間的平均重疊度 (Jaccard Similarity)
+    all_projects = list(case_map.keys())
+    overlap_matrix = pd.DataFrame(index=pages, columns=pages, dtype=float)
+
+    for p1 in pages:
+        for p2 in pages:
+            ratios = []
+            for proj in all_projects:
+                s1 = case_map[proj].get(p1, set())
+                s2 = case_map[proj].get(p2, set())
+                
+                # 只有當兩個項目都有推薦名單時才計算，避免分母為 0
+                if s1 and s2:
+                    intersection = s1.intersection(s2)
+                    union = s1.union(s2)
+                    ratios.append(len(intersection) / len(union))
+                elif not s1 and not s2:
+                    # 如果兩邊都沒資料，這在比較中通常不具意義，跳過或設為 0
+                    continue 
+            
+            overlap_matrix.loc[p1, p2] = np.mean(ratios) if ratios else 0
+
+    return overlap_matrix, case_map
+
+
+def plot_overlap_heatmap(matrix):
+    plt.rcParams['font.sans-serif'] = ['Arial Unicode MS']
+    plt.rcParams['axes.unicode_minus'] = False
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(matrix.astype(float), annot=True, cmap='YlGnBu', fmt='.2%')
+    plt.title('跨項目推薦名單平均重疊度熱點圖')
+    plt.show()
+
+def analyze_top_n_overlap(item_data, top_n=10):
+    """
+    分析不同項目間 Top N 推薦名單的重疊度
+    """
+    pages = list(item_data.keys())
+    # 取得第一個 DataFrame 的長度作為總案數
+    num_cases = len(next(iter(item_data.values()))) 
+    
+    # 1. 預處理：提取每個案子各項目的 Top N 名單
+    case_top_n_sets = []
+    for i in range(num_cases):
+        case_dict = {}
+        for page in pages:
+            df = item_data[page]
+            # 篩選推薦委員欄位 (假設欄位順序已按分數排序)
+            rec_cols = df.filter(regex='Recommend|推薦委員')
+            
+            if i < len(df):
+                # 取得該行所有委員，過濾無效值，並只取前 top_n 個
+                all_names = [str(n).strip() for n in rec_cols.iloc[i] 
+                             if str(n).strip() not in ["", "0", "nan", "None"]]
+                case_dict[page] = set(all_names[:top_n]) # 關鍵點：切片取 Top N
+            else:
+                case_dict[page] = set()
+        case_top_n_sets.append(case_dict)
+
+    # 2. 計算兩兩項目間的 Top N 平均重疊度
+    overlap_matrix = pd.DataFrame(index=pages, columns=pages, dtype=float)
+    
+    for p1 in pages:
+        for p2 in pages:
+            ratios = []
+            for i in range(num_cases):
+                s1, s2 = case_top_n_sets[i][p1], case_top_n_sets[i][p2]
+                
+                if not s1 and not s2:
+                    ratios.append(1.0)
+                    continue
+                
+                intersection = s1.intersection(s2)
+                union = s1.union(s2)
+                
+                # 計算 Top N 的 Jaccard 相似度
+                ratio = len(intersection) / len(union) if union else 0
+                ratios.append(ratio)
+            
+            overlap_matrix.loc[p1, p2] = np.mean(ratios)
+
+    return overlap_matrix, case_top_n_sets
+
+def find_consistent_experts(case_top_n_sets):
+    """找出在所有項目中都出現的委員"""
+    consistent_results = []
+    for i, case_dict in enumerate(case_top_n_sets):
+        # 取得所有項目的 set
+        all_sets = list(case_dict.values())
+        if not all_sets: continue
+        
+        # 取交集：在所有項目都出現的人
+        common_experts = set.intersection(*all_sets)
+        if common_experts:
+            consistent_results.append({
+                '案子索引': i,
+                '大滿貫委員': list(common_experts)
+            })
+    return pd.DataFrame(consistent_results)
+
 def main():
     input_path = 'data/output/recommendation_results_org.xlsx'
     org_path = 'data/output/(勿對外公開資料或流傳)108-115年智慧計算學門大批專題計畫申請案件(含中英文摘要及關鍵字)_推薦表統合_VBA.xlsx'
@@ -178,6 +308,20 @@ def main():
     # for key,value in item_data.items():
     #     avg[key] = calculate_average_similarity(value)
     # print(avg)
+
+
+    top_n = 10
+    overlap_matrix, final_case_map = analyze_long_format_overlap(item_data, top_n=30)
+    # overlap_matrix, case_scores = analyze_cross_item_overlap(item_data)
+
+    # consistent_df = find_consistent_experts(final_case_map)
+    # print("在所有項目中皆被推薦至 Top 10 的委員名單：")
+    # print(consistent_df)
+    # 1. 顯示兩兩項目的重疊比例
+    print("\n項目間平均重疊矩陣：")
+    print(overlap_matrix)
+    plot_overlap_heatmap(overlap_matrix)
+
 
 if __name__ == '__main__':
     main()
