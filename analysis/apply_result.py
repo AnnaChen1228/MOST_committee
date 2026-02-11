@@ -4,7 +4,6 @@ from langchain_community.vectorstores import Chroma
 import os
 import chromadb
 import tqdm
-from save_commitee_data import filiter_school
 
 # --- 1. 設定模型 (需與存檔時一致) ---
 model_name = 'BAAI/bge-large-zh-v1.5'
@@ -46,8 +45,6 @@ def load_data(file_path, pages):
                     keywords = []
             except:
                 keywords = []
-            school, department = filiter_school(row['機關名稱'])
-    
             apply_dicts[title] = {
                 'manager': str(row['計畫主持人']),
                 'title': title,
@@ -56,9 +53,7 @@ def load_data(file_path, pages):
                 'application_directions': row.get('application_directions', ''),
                 'problems_to_solve': row.get('problems_to_solve', ''),
                 'goals_to_achieve': row.get('goals_to_achieve', ''),
-                'methods_to_solve': row.get('methods_to_solve', ''),
-                'school': school,
-                'department': department
+                'methods_to_solve': row.get('methods_to_solve', '')
             }
     return apply_dicts
 
@@ -187,7 +182,6 @@ def main():
                     "recommended_manager": recommended_manager,
                     "similarity_score": score, # 存入四捨五入後的分數
                     "matched_doc_id": doc.metadata.get('title', 'N/A'),
-                    "school": project_info['school'],
                     "collection_field": col_name
                 }
 

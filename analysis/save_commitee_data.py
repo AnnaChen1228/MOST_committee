@@ -40,7 +40,7 @@ def add_data(authors,author_info, year):
     return authors
 
 def filiter_school(department_full):
-    keywords = ['大學', '院', '博物館', '學校', '法人']  # 切割關鍵字
+    keywords = ['大學', '院', '博物館', '學校', '法人','中心']  # 切割關鍵字
     for keyword in keywords:
         if keyword in department_full:
             # split(keyword, 1) 確保只切分第一個出現的關鍵字
