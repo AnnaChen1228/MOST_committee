@@ -524,6 +524,124 @@ def filter_committee(is_industry=False):
         pd.DataFrame(result_dict).to_excel(writer, sheet_name=sheet, index=False)
     writer.close()
 
+def filter_committee_remove(is_industry=False):
+    #: 1. 預先載入資料 (移出迴圈以提升效能)
+    crawler_RDF_folder_path = find_key_path("碩博士論文_RDF")
+    crawler_RDF_data = pd.read_excel(crawler_RDF_folder_path)
+    
+    statistical_analysis_folder_path = find_key_path("統計表分析") 
+    statistical_analysis_file = pd.ExcelFile(statistical_analysis_folder_path)
+    
+    # 根據是否為產學合作選擇路徑
+    apply_list_folder_path = find_key_path("產學合作申請名冊") if is_industry else find_key_path("研究計畫申請名冊")
+    apply_list_file = pd.ExcelFile(apply_list_folder_path)
+    
+    committee_person_path = find_key_path("統計清單人才資料_RDF_UNI")
+    committee_person_RDF_df = pd.read_excel(committee_person_path)
+    
+    # 建立寫入器
+    writer = pd.ExcelWriter(find_key_path("過濾相近後統計表"), engine='openpyxl')
+    
+    #@ 2. 開始處理每個分頁
+    for sheet in statistical_analysis_file.sheet_names:
+        current_sheet_statistical_excel_data = pd.read_excel(statistical_analysis_file, sheet_name=sheet)
+        result_dict = []
+        
+        # 取得所有申請人清單
+        all_apply_members = current_sheet_statistical_excel_data[value_of_key("申請主持人欄位名稱")].to_list()
+        
+        for index, statistical_row in current_sheet_statistical_excel_data.iterrows():
+            # = 收集 30 位委員的背景資料
+            committee_person_candidates = []
+            for i in range(1, 31):  # 調整為 30 位
+                col_name = f'推薦委員{i}'
+                if col_name not in statistical_row or pd.isna(statistical_row[col_name]):
+                    continue
+                
+                name = statistical_row[col_name]
+                
+                # 委員過去就職學校
+                find_temp_df = committee_person_RDF_df[committee_person_RDF_df["名稱"] == name]
+                been_list = list(set(find_temp_df["學校"].tolist()))
+                
+                # 委員畢業學校
+                graduate_list = list(set(find_crawler_person_relative_school(name, crawler_RDF_data)))
+                
+                committee_person_candidates.append({
+                    "委員名稱": name,
+                    "委員曾就職學校": been_list,
+                    "委員過去畢業學校": graduate_list,
+                    "職稱": find_temp_df['職稱'].iloc[0] if not find_temp_df.empty else "未知"
+                })
+            
+            # = 取得申請案相關資訊 (學校、主持人等)
+            total_filter_result = {
+                'Filtered Members': [],
+                'Remaining Members': [],
+                'Filter Reasons': {}
+            }
+            
+            # 遍歷申請名冊找到對應計畫
+            for app_sheet in apply_list_file.sheet_names:
+                current_app_data = pd.read_excel(apply_list_file, sheet_name=app_sheet)
+                target_project = current_app_data[current_app_data[value_of_key("計畫名稱")] == statistical_row[value_of_key("計畫名稱")]]
+                
+                if target_project.empty:
+                    continue
+
+                for _, app_row in target_project.iterrows():
+                    # 提取共同主持人資訊
+                    joint_person_list = app_row.get(value_of_key("申請共同主持人"), [])
+                    joint_dept_list = app_row.get(value_of_key("申請共同機構欄位名稱"), [])
+                    
+                    common_joint_list = extract_text_in_parentheses(joint_person_list) + extract_text_in_parentheses(joint_dept_list)
+                    
+                    # 建立申請端學校清單
+                    apply_school_info = {
+                        "申請人名稱": app_row.get(value_of_key("申請主持人欄位名稱"), ''),
+                        "計畫申請學校": split_institution(app_row.get(value_of_key("申請機構欄位名稱"), ''))[0],
+                        "共同計畫主持的學校": [split_institution(dept)[0] for _, dept in common_joint_list],
+                        "計畫主持人過去畢業的學校": find_crawler_person_relative_school(app_row.get(value_of_key("申請主持人欄位名稱")), crawler_RDF_data),
+                    }
+
+                    # 執行進階過濾
+                    filter_pairs = [("計畫申請學校", "委員曾就職學校"), ("共同計畫主持的學校", "委員曾就職學校")]
+                    TITLE_RESTRICTIONS = {"助理教授": ["教授", "研究員"], "助研究員": ["教授", "研究員"]}
+                    
+                    current_res = filter_committee_advanced(
+                        apply_school_info, 
+                        committee_person_candidates, 
+                        filter_pairs, 
+                        all_apply_members, 
+                        TITLE_RESTRICTIONS,
+                        whether_to_execute_the_option={
+                            "是否過濾申請人": True if is_industry else False,
+                            "是否過濾相同學校": True,
+                            "是否過濾職稱": True,
+                            "是否過濾掉自身": True
+                        }
+                    )
+                    total_filter_result = merge_committee_advanced(total_filter_result, current_res)
+                break 
+
+            # = 3. 挑選前 10 位合格委員並寫回 Row
+            qualified_members = total_filter_result["Remaining Members"]
+            for i in range(1, 11):
+                # 如果合格人數不足 10 位，後面會填入空值或提示
+                statistical_row[f"選取委員{i}"] = qualified_members[i-1] if i <= len(qualified_members) else ""
+            
+            # 紀錄篩掉的原因供查核
+            statistical_row["篩掉人員"] = str(total_filter_result["Filtered Members"])
+            statistical_row["篩選原因"] = str(total_filter_result["Filter Reasons"])
+            
+            result_dict.append(statistical_row)
+            
+        # 儲存該分頁結果
+        pd.DataFrame(result_dict).to_excel(writer, sheet_name=sheet, index=False)
+    
+    writer.close()
+    print("過濾完成，結果已儲存。")
+
 def load_data(file_path):
     """
         讀取 Excel 檔案並回傳 workbook 和 worksheet.
