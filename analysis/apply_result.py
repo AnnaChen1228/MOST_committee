@@ -87,15 +87,16 @@ def search(vectordb, query_text, RECOMMAND_AMOUNT=30):
         return []
 
 def main():
-    store_file_path = 'data/research_proj/115計算機學門審查/apply_project_with_abstract.xlsx'
-    years = ['115'] # 假設這是申請年度
+    # store_file_path = 'data/industry_coop/apply_project_with_abstract.xlsx'
+    # years = ['E41'] # 假設這是申請年度
+    years = ['115-1電子資通領域(大產學)初審推薦名冊']
+    store_file_path = "data/industry_coop/apply_project_with_abstract(電子資通).xlsx"
     
     # 1. 載入申請資料
     apply_dicts = load_data(store_file_path, years)
-
     # # 2. 設定資料庫路徑與分類
-    path_basic = "database/vectorstore_basic"
-    path_abstract = "database/vectorstore_abstract"
+    path_basic = "database/vectorstore_basic_industry"
+    path_abstract = "database/vectorstore_abstract_industry"
     
     # 定義哪些欄位去哪個資料庫找
     collections_map = {
@@ -116,7 +117,7 @@ def main():
     client_abstract = chromadb.PersistentClient(path=path_abstract)
     
     # 確保輸出檔案路徑正確
-    output_file = 'data/output/result_score.xlsx'
+    output_file = 'data/industry_coop/result_score(電子資通).xlsx'
     if os.path.exists(output_file):
         try:
             os.remove(output_file)
@@ -146,9 +147,9 @@ def main():
         results_list = []
         
         # ★ 建議 2: 強制對申請案排序 (sorted)，確保每次執行的順序一模一樣
-        sorted_projects = sorted(apply_dicts.items(), key=lambda x: x[0])
+        # sorted_projects = sorted(apply_dicts.items(), key=lambda x: x[0])
         
-        for project_title, project_info in tqdm.tqdm(sorted_projects, desc=f"Searching {col_name}"):
+        for project_title, project_info in tqdm.tqdm(apply_dicts.items(), desc=f"Searching {col_name}"):
             
             query_data = project_info.get(col_name)
             

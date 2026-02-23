@@ -40,7 +40,7 @@ def add_data(authors,author_info, year):
     return authors
 
 def filiter_school(department_full):
-    keywords = ['大學', '院', '博物館', '學校', '法人','中心']  # 切割關鍵字
+    keywords = ['大學', '院', '博物館', '學校', '法人','中心', '分校']  # 切割關鍵字
     for keyword in keywords:
         if keyword in department_full:
             # split(keyword, 1) 確保只切分第一個出現的關鍵字
@@ -53,8 +53,8 @@ def filiter_school(department_full):
 
 
 def main():
-    data_file = 'data/research_proj/115計算機學門審查/(勿對外公開資料或流傳)108-115年智慧計算學門大批專題計畫申請案件(含中英文摘要及關鍵字).xlsx'
-    years = ['108','109','110','111','112','113','114','115']
+    data_file = 'data/industry_coop/108-112產學計畫E41申請名冊.xlsx'
+    years = ['專題計畫綜合查詢']
     
     # 1. 獲取資料列表
     result_data = load_data(data_file, years)
@@ -64,8 +64,8 @@ def main():
         df_result = pd.DataFrame(result_data)
         df_result = df_result.sort_values(by=['名字', '年份'])
         # 3. 指定輸出檔名
-        output_filename = './data/RDF_database/commitee.xlsx'
-        uni_output_filename = './data/RDF_database/commitee_uni.xlsx'
+        output_filename = './data/RDF_database/commitee_industry.xlsx'
+        uni_output_filename = './data/RDF_database/commitee_uni_industry.xlsx'
         # 4. 存成 Excel (index=False 代表不存入最左邊的 0,1,2... 索引編號)
         df_result.to_excel(output_filename, index=False)
         df_latest = df_result.sort_values(by=['名字', '年份'], ascending=[True, False])
