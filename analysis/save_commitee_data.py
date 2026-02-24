@@ -40,6 +40,8 @@ def add_data(authors,author_info, year):
     return authors
 
 def filiter_school(department_full):
+    school = department_full
+    department = ""
     keywords = ['大學', '院', '博物館', '學校', '法人','中心', '分校']  # 切割關鍵字
     for keyword in keywords:
         if keyword in department_full:
@@ -55,17 +57,19 @@ def filiter_school(department_full):
 def main():
     data_file = 'data/industry_coop/108-112產學計畫E41申請名冊.xlsx'
     years = ['專題計畫綜合查詢']
-    
+    research_store_file_path = 'data/research_proj/115計算機學門審查/pass_project_with_abstract.xlsx'
+    research_years = ['108','109','110','111','112','113','114']
     # 1. 獲取資料列表
     result_data = load_data(data_file, years)
-    
+    research_result_data = load_data(research_store_file_path, research_years)
+    result_data.extend(research_result_data)
     if result_data:
         # 2. 轉換為 DataFrame
         df_result = pd.DataFrame(result_data)
         df_result = df_result.sort_values(by=['名字', '年份'])
         # 3. 指定輸出檔名
-        output_filename = './data/RDF_database/commitee_industry.xlsx'
-        uni_output_filename = './data/RDF_database/commitee_uni_industry.xlsx'
+        output_filename = './data/RDF_database/commitee_all.xlsx'
+        uni_output_filename = './data/RDF_database/commitee_uni_all.xlsx'
         # 4. 存成 Excel (index=False 代表不存入最左邊的 0,1,2... 索引編號)
         df_result.to_excel(output_filename, index=False)
         df_latest = df_result.sort_values(by=['名字', '年份'], ascending=[True, False])

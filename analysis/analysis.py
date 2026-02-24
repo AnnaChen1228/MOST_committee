@@ -45,11 +45,35 @@ def save_data(data, path):
 
 def count_recommendations(df):
     if df.empty: return {}
-    recommend_df = df.filter(regex='Recommend|推薦委員')
+    
+    # 1. 先抓出所有包含 "Recommend" 或 "推薦委員" 的欄位
+    # 這時候會包含 "推薦委員" 和 "推薦委員學校"
+    potential_cols = df.filter(regex='Recommend|推薦委員').columns
+    
+    # 2. 設定要排除的關鍵字
+    # 只要欄位名稱裡有 "學校" 或 "School"，就踢掉
+    exclude_keywords = ['學校', 'School', '單位', 'Unit'] 
+    
+    # 3. 進行過濾：保留「不包含」排除關鍵字的欄位
+    target_cols = [c for c in potential_cols if not any(bad_word in c for bad_word in exclude_keywords)]
+    
+    # --- 除錯用：你可以把下面這行取消註解，看看最後抓到了哪些欄位 ---
+    # print(f"最終使用的欄位: {target_cols}")
+    
+    # 4. 只使用過濾後的欄位來取資料
+    recommend_df = df[target_cols]
+    
     all_names = recommend_df.stack()
+    
+    # 轉字串並去除空白
+    all_names = all_names.astype(str).str.strip()
+    
+    # 過濾無效值
     valid_names = all_names[~all_names.isin(["", "nan", "NaN", "0", "None"])]
+    
     name_counts = valid_names.value_counts().to_dict()
     return name_counts
+
 
 def calculate_average_similarity(df):
     if df.empty: return 0
@@ -247,7 +271,7 @@ def compare_distributions_fig(new_counts_dict, old_counts_dict, save_path=None):
     leg._legend_box.align = "left" 
 
     # 增加標題與圖表的間距
-    plt.title('新舊名單推薦次數分佈與累積百分比比較', fontsize=18, pad=20)
+    plt.title('過濾前後名單推薦次數分佈與累積百分比比較', fontsize=18, pad=20)
     plt.tight_layout()
     
     if save_path:
@@ -366,9 +390,9 @@ def main():
     current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
     print(f"🕒 本次執行時間戳記: {current_time}")
 
-    input_path = 'data/output/recommendation_results_filter.xlsx'
-    org_path = 'data/output/(勿對外公開資料或流傳)108-115年智慧計算學門大批專題計畫申請案件(含中英文摘要及關鍵字)_推薦表統合_VBA.xlsx'
-    item_data_file = 'data/output/result_score.xlsx'
+    input_path = 'data/research_proj/115計算機學門審查/recommendation_results_filter(研究計畫).xlsx'
+    org_path = 'data/research_proj/115計算機學門審查/recommendation_results_org_colored(研究計畫).xlsx'
+    item_data_file = 'data/research_proj/115計算機學門審查/result_score(研究計畫).xlsx'
     
     # 讀取資料
     print(f"📂 讀取新名單: {input_path}")
@@ -424,25 +448,25 @@ def main():
     #     print("═"*40 + "\n")
 
     # # 跨項目分析
-    # print(f"📂 讀取細項評分資料: {item_data_file}")
-    # pages = ['title', 'keywords', 'application_directions', 'problems_to_solve', 'goals_to_achieve', 'methods_to_solve']
-    # item_data = load_data_by_page(item_data_file, pages)
+    print(f"📂 讀取細項評分資料: {item_data_file}")
+    pages = ['title', 'keywords', 'application_directions', 'problems_to_solve', 'goals_to_achieve', 'methods_to_solve']
+    item_data = load_data_by_page(item_data_file, pages)
     
-    # if item_data:
-    #     avg_scores = {}
-    #     for key, df in item_data.items():
-    #         avg_scores[key] = calculate_average_similarity(df)
-    #     print("📊 各項目平均相似度分數:", avg_scores)
+    if item_data:
+        avg_scores = {}
+        for key, df in item_data.items():
+            avg_scores[key] = calculate_average_similarity(df)
+        print("📊 各項目平均相似度分數:", avg_scores)
 
-    #     top_n = 30 
-    #     overlap_matrix, final_case_map = analyze_long_format_overlap(item_data, top_n=top_n)
+        top_n = 30 
+        overlap_matrix, final_case_map = analyze_long_format_overlap(item_data, top_n=top_n)
         
-    #     if not overlap_matrix.empty:
-    #         print("\n項目間平均重疊矩陣：")
-    #         print(overlap_matrix)
+        if not overlap_matrix.empty:
+            print("\n項目間平均重疊矩陣：")
+            print(overlap_matrix)
             
-    #         heatmap_path = f'data/output/fig_heatmap_{current_time}.png'
-    #         plot_overlap_heatmap(overlap_matrix, save_path=heatmap_path)
+            heatmap_path = f'data/output/fig_heatmap_{current_time}.png'
+            plot_overlap_heatmap(overlap_matrix, save_path=heatmap_path)
 
 if __name__ == '__main__':
     main()

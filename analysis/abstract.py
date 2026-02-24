@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from tqdm.auto import tqdm
 import os
 
-ollama_client = ollama.Client(host='http://localhost:1228')
+ollama_client = ollama.Client(host='http://140.115.54.63:11434')
 
 prompt = '''
 你是一位專門分析科研計畫摘要的助理。請從提供的計畫摘要中準確擷取以下四個關鍵要素：
@@ -77,7 +77,6 @@ def generate_by_file(file,years,output_file):
         apply_project_df = apply_project_df.fillna('')
         total_projects = len(apply_project_df)
         print(f"共有 {total_projects} 個項目需要處理")
-        
         # 創建一個新的 DataFrame 來存儲結果
         results_df = pd.DataFrame()
         
@@ -99,7 +98,7 @@ def generate_by_file(file,years,output_file):
                     del project_dict['Index']
                 
                 # 獲取摘要
-                abstract = getattr(project, '中文摘要')
+                abstract = project_dict['中文摘要']
                 if isinstance(abstract, str):
                     abstract = abstract.replace('_x000D', '')  # 清理特殊字符
                 if not abstract:
@@ -168,18 +167,18 @@ def generate_by_file(file,years,output_file):
     print(f"\n全部處理完成，總耗時: {total_time_str}")
 
 def main():
-    print('---start pass project abstract generation---')
-    path_file_path = 'data/research_proj/115計算機學門審查/pass_project.xlsx'
-    pass_project_excel_file = pd.ExcelFile(path_file_path)
-    years = ['113','114']
-    pass_output_file = "data/research_proj/115計算機學門審查/pass_project_with_abstract.xlsx"
-    generate_by_file(pass_project_excel_file, years, pass_output_file)
+    # print('---start pass project abstract generation---')
+    # path_file_path = 'data/industry_coop/108-112產學計畫E41申請名冊.xlsx'
+    # pass_project_excel_file = pd.ExcelFile(path_file_path)
+    # years = ['專題計畫綜合查詢']
+    # pass_output_file = "data/industry_coop/pass_project_with_abstract.xlsx"
+    # generate_by_file(pass_project_excel_file, years, pass_output_file)
 
     print('---start apply project abstract generation---')
-    apply_file_path = 'data/research_proj/115計算機學門審查/(勿對外公開資料或流傳)108-115年智慧計算學門大批專題計畫申請案件(含中英文摘要及關鍵字).xlsx'
+    apply_file_path = 'data/research_proj/115計算機學門審查/(給張老師)請推薦書審委員_115年度青穗學者計畫(智慧計算) 20260223.xlsx'
     apply_project_excel_file = pd.ExcelFile(apply_file_path)
-    apply_years = ['115']
-    apply_output_file = "data/research_proj/115計算機學門審查/apply_project_with_abstract.xlsx"
+    apply_years = ['test']
+    apply_output_file = "data/research_proj/115計算機學門審查/apply_project_with_abstract(青穗學者計畫).xlsx"
     generate_by_file(apply_project_excel_file, apply_years, apply_output_file)
 if __name__ == "__main__":
     main()

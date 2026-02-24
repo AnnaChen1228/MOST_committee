@@ -73,7 +73,9 @@ def load_apply_data(file_path, pages):
                     'coManger': co_m,
                     'coSchool': co_s
                 }
-        except: continue
+        except Exception as e:
+            print(f"跳過頁面 {page}: {e}")
+            continue
     return apply_dicts
 
 def load_score_data(file_path, pages):
@@ -82,7 +84,9 @@ def load_score_data(file_path, pages):
         try:
             df = pd.read_excel(file_path, sheet_name=page, dtype=str).fillna("")
             page_data[page] = df[['project', 'manager', 'similarity_score', 'recommended_manager']]
-        except: continue
+        except Exception as e:
+            print(f"跳過頁面 {page}: {e}")
+            continue
     return page_data
 
 def calculate_score(data):
@@ -183,16 +187,39 @@ def save_results_clean(results, output_filename):
         excel_rows.append(row)
     pd.DataFrame(excel_rows).to_excel(output_filename, index=False)
 
+def group_by_project_dict(datas, pages):
+    results = {}
+    for page in pages:
+        if page not in datas: continue
+        for row in datas[page].to_dict('records'):
+            p = row.get('project')
+            if p:
+                if p not in results: results[p] = {}
+                if page not in results[p]: results[p][page] = []
+                results[p][page].append(row)
+    return results
+
+def check_path(path):
+    if not os.path.exists(path):
+        print(f"找不到檔案: {path}")
+
 # --- 5. 主程式 ---
 def main():
-    apply_path = 'data/industry_coop/apply_project_with_abstract(電子資通).xlsx'
-    input_score_file = 'data/industry_coop/result_score(電子資通).xlsx'
-    committee_uni_file = 'data/RDF_database/commitee_uni_industry.xlsx'
+    apply_path = 'data/research_proj/115計算機學門審查/apply_project_with_abstract(研究計畫).xlsx'
+    check_path(apply_path)
+    input_score_file = 'data/research_proj/115計算機學門審查/result_score(研究計畫).xlsx'
+    check_path(input_score_file)
+    committee_uni_file = 'data/RDF_database/commitee_uni_all.xlsx'
+    check_path(committee_uni_file)
     blacklist_path = 'data/retiree_blacklist.csv'
-    
+    check_path(blacklist_path)
+    induatry = False # 產學|研究計畫(過濾本次申請人)
     # 讀取資料
-    apply_data = load_apply_data(apply_path, ['115-1電子資通領域(大產學)初審推薦名冊'])
-    all_applicants_set = set(info['manager'] for info in apply_data.values() if info['manager'])
+    apply_data = load_apply_data(apply_path, ['115'])
+    if induatry:
+        all_applicants_set = set(info['manager'] for info in apply_data.values() if info['manager'])
+    else:
+        all_applicants_set = set()
     pages = ['title', 'keywords', 'application_directions', 'problems_to_solve', 'goals_to_achieve', 'methods_to_solve']
     result = calculate_score(group_by_project_dict(load_score_data(input_score_file, pages), pages))
     # 合併資訊
@@ -208,7 +235,7 @@ def main():
     blacklist = pd.read_csv(blacklist_path)['姓名'].astype(str).tolist() if os.path.exists(blacklist_path) else []
 
     # 上色存檔
-    save_results_with_highlight(result, 'data/industry_coop/recommendation_results_org_colored(電子資通).xlsx', reviewer_school_map, blacklist, all_applicants_set)
+    save_results_with_highlight(result, 'data/research_proj/115計算機學門審查/recommendation_results_org_colored(研究計畫).xlsx', reviewer_school_map, blacklist, all_applicants_set)
     # 過濾與紀錄理由
     for proj, info in result.items():
         filtered, reasons = [], []
@@ -231,19 +258,7 @@ def main():
             info['filter_reason_str'] = "[" + ";".join(reasons) + ";]"
         else:
             info['filter_reason_str'] = "[]"
-    save_results_clean(result, 'data/industry_coop/recommendation_results_filter(電子資通).xlsx')
-
-def group_by_project_dict(datas, pages):
-    results = {}
-    for page in pages:
-        if page not in datas: continue
-        for row in datas[page].to_dict('records'):
-            p = row.get('project')
-            if p:
-                if p not in results: results[p] = {}
-                if page not in results[p]: results[p][page] = []
-                results[p][page].append(row)
-    return results
+    save_results_clean(result, 'data/research_proj/115計算機學門審查/recommendation_results_filter(研究計畫).xlsx')
 
 if __name__ == "__main__":
     main()
