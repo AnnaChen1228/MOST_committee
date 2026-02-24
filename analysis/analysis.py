@@ -48,7 +48,7 @@ def count_recommendations(df):
     
     # 1. 先抓出所有包含 "Recommend" 或 "推薦委員" 的欄位
     # 這時候會包含 "推薦委員" 和 "推薦委員學校"
-    potential_cols = df.filter(regex='Recommend|推薦委員').columns
+    potential_cols = df.filter(regex='Recommend|推薦委員|選取委員').columns
     
     # 2. 設定要排除的關鍵字
     # 只要欄位名稱裡有 "學校" 或 "School"，就踢掉
@@ -180,7 +180,8 @@ def compare_distributions_fig(new_counts_dict, old_counts_dict, save_path=None):
     # 1. 準備數據
     counts_new = list(new_counts_dict.values())
     counts_old = list(old_counts_dict.values())
-    
+    mean_new = np.mean(counts_new)
+    mean_old = np.mean(counts_old)
     if not counts_new and not counts_old:
         print("⚠️ 無數據可比較")
         return
@@ -253,13 +254,14 @@ def compare_distributions_fig(new_counts_dict, old_counts_dict, save_path=None):
     
     # 準備要合併進去的統計文字
     info_text = (f"新名單總人數: {len(counts_new)} 人\n"
-                 f"對照組總人數: {len(counts_old)} 人")
+                 f"新名單平均推薦次數: {mean_new:.2f}人\n"
+                 f"對照組總人數: {len(counts_old)} 人"
+                 f"對照組平均推薦次數: {mean_old:.2f}人\n")
 
     # 建立合併後的圖例
     leg = ax1.legend(lines1 + lines2, labels1 + labels2, 
                      title=info_text,              # 將統計資訊設為標題
-                     loc='lower right',            # 固定在右下角
-                     bbox_to_anchor=(0.98, 0.02),  # 微調位置
+                     loc='center right',            
                      fontsize=11, 
                      title_fontsize=11,            # 標題字體大小
                      frameon=True, 
@@ -307,8 +309,8 @@ def plot_overlap_heatmap(matrix, save_path=None):
 # --- 4. 重疊度分析邏輯 ---
 
 def compare_overlap(df1, df2):
-    rec1 = df1.filter(regex='Recommend|推薦委員')
-    rec2 = df2.filter(regex='Recommend|推薦委員')
+    rec1 = df1.filter(regex='Recommend|推薦委員|選取委員')
+    rec2 = df2.filter(regex='Recommend|推薦委員|選取委員')
 
     num_rows = min(len(rec1), len(rec2))
     ratios = []
@@ -392,6 +394,7 @@ def main():
 
     input_path = 'data/research_proj/115計算機學門審查/recommendation_results_filter(研究計畫).xlsx'
     org_path = 'data/research_proj/115計算機學門審查/recommendation_results_org_colored(研究計畫).xlsx'
+    # org_path = 'data/output/(勿對外公開資料或流傳)108-115年智慧計算學門大批專題計畫申請案件(含中英文摘要及關鍵字)_推薦表統合_VBA_filiter.xlsx'
     item_data_file = 'data/research_proj/115計算機學門審查/result_score(研究計畫).xlsx'
     
     # 讀取資料
