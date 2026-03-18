@@ -1,11 +1,11 @@
 import pandas as pd
-from langchain_community.embeddings import HuggingFaceEmbeddings # 改回這個比較穩定
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 import os
 import chromadb
 import tqdm
 
-# --- 1. 設定模型 (需與存檔時一致) ---
+# --- 1. 設定模型 ---
 model_name = 'BAAI/bge-large-zh-v1.5'
 model_kwargs = {'device': 'cpu'}
 encode_kwargs = {'normalize_embeddings': True}
@@ -33,25 +33,26 @@ def load_data(file_path, pages):
             title = str(row.get('計畫名稱') or row.get('計畫中文名稱') or "").strip()
             if not title: continue
 
-            # 處理關鍵字
+            # ★ 修正：使用 .get() 兼容不同 Excel 可能的欄位名稱
             try:
-                keywords_str = row['中文關鍵字']
+                keywords_str = row.get('keywords') or row.get('中文關鍵字') or ""
                 if isinstance(keywords_str, list):
                     keywords = keywords_str
                 elif keywords_str:
                     keywords_str = keywords_str.replace('，', ',').replace('；', ',').replace(';', ',').replace('、', ',').replace('。', ',')
                     keywords_str = keywords_str.replace('\n', ',').replace('\r', ',')
-                    keywords = keywords_str.split('\n')
+                    keywords = keywords_str.split(',')
                     keywords = [k.strip() for k in keywords if k.strip()]
                 else:
                     keywords = []
             except:
                 keywords = []
+                
             apply_dicts[title] = {
-                'manager': str(row['申請人']),
+                'manager': str(row.get('申請人', '')),
                 'title': title,
-                'keywords': keywords, # List
-                'abstract': row['中文摘要'],
+                'keywords': keywords,
+                'abstract': row.get('中文摘要', ''),
                 'application_directions': row.get('application_directions', ''),
                 'problems_to_solve': row.get('problems_to_solve', ''),
                 'goals_to_achieve': row.get('goals_to_achieve', ''),
@@ -74,14 +75,12 @@ def save_data(file_path, data_list, sheet_name):
             df.to_excel(writer, sheet_name=sheet_name, index=False)
 
 # --- 4. 搜尋函式 ---
-def search(vectordb, query_text, RECOMMAND_AMOUNT=30):
-    # 使用 similarity_search_with_score (Cosine Distance)
-    # Chroma 預設是距離 (越小越好)，但 LangChain 的 relevance_score 會轉成 (0~1 越大越好)
+def search(vectordb, query_text, RECOMMAND_AMOUNT=50): # 稍微抓多一點備用
     try:
         documents = vectordb.similarity_search_with_relevance_scores(
             query_text,
             k=RECOMMAND_AMOUNT,
-            score_threshold=0.1 # 過濾掉太不相關的
+            score_threshold=0.1
         )
         return documents
     except Exception as e:
@@ -90,17 +89,15 @@ def search(vectordb, query_text, RECOMMAND_AMOUNT=30):
 
 def main():
     store_file_path = 'data/research_proj/115計算機學門審查/青穗學者/apply_project_with_abstract(青穗學者計畫new).xlsx'
-    years = ['推薦書審委員_115工程處智慧計算青穗申請案'] # 假設這是申請年度
-    # years = ['115-1電子資通領域(大產學)初審推薦名冊']
-    # store_file_path = "data/industry_coop/apply_project_with_abstract(電子資通).xlsx"
+    years = ['推薦書審委員_115工程處智慧計算青穗申請案'] # 假設這是申請年度 
     
     # 1. 載入申請資料
     apply_dicts = load_data(store_file_path, years)
-    # # 2. 設定資料庫路徑與分類
-    path_basic = "database/vectorstore_basic_industry"
-    path_abstract = "database/vectorstore_abstract_industry"
+    print(len(apply_dicts))
+    # 2. 設定資料庫路徑與分類
+    path_basic = "database/vectorstore_basic_research_by_project"
+    path_abstract = "database/vectorstore_abstract_research_by_project"
     
-    # 定義哪些欄位去哪個資料庫找
     collections_map = {
         'title': path_basic,
         'keywords': path_basic,
@@ -110,15 +107,13 @@ def main():
         'methods_to_solve': path_abstract
     }
     
-    # 您想要搜尋的欄位列表
     target_collections = ['title', 'keywords', 'application_directions', 'problems_to_solve', 'goals_to_achieve', 'methods_to_solve']
-    # 初始化 Clients (只連線一次)
+    
     print("正在連線至向量資料庫...")
     client_basic = chromadb.PersistentClient(path=path_basic)
     client_abstract = chromadb.PersistentClient(path=path_abstract)
     
-    # 確保輸出檔案路徑正確
-    output_file = 'data/research_proj/115計算機學門審查/青穗學者/result_score(青穗學者計畫new_industry).xlsx'
+    output_file = 'data/research_proj/115計算機學門審查/青穗學者/result_score(青穗學者計畫new_by_project_research).xlsx'
     if os.path.exists(output_file):
         try:
             os.remove(output_file)
@@ -130,10 +125,7 @@ def main():
     # 3. 開始搜尋
     for col_name in target_collections:
         db_path = collections_map.get(col_name)
-        if db_path == path_basic:
-            current_client = client_basic
-        else:
-            current_client = client_abstract
+        current_client = client_basic if db_path == path_basic else client_abstract
             
         try:
             vectorstore = Chroma(
@@ -146,9 +138,6 @@ def main():
             continue
 
         results_list = []
-        
-        # ★ 建議 2: 強制對申請案排序 (sorted)，確保每次執行的順序一模一樣
-        # sorted_projects = sorted(apply_dicts.items(), key=lambda x: x[0])
         
         for project_title, project_info in tqdm.tqdm(apply_dicts.items(), desc=f"Searching {col_name}"):
             
@@ -164,44 +153,41 @@ def main():
             if not query_text or len(query_text.strip()) < 2:
                 continue
 
-            # 執行搜尋 (這裡會抓 50 筆)
             documents = search(vectorstore, query_text)
             best_candidates = {} 
             
             for doc, raw_score in documents:
-                # ★ 建議 3: 收到分數立刻四捨五入 (小數點後 6 位)
-                # 這是解決「同一台電腦結果不同」最關鍵的一步
                 score = round(raw_score, 6)
                 
-                recommended_manager = doc.metadata.get('manager', 'Unknown')
+                # ★ 核心修改：取得推薦的「計畫名稱」與「主持人」
+                recommended_title = doc.metadata.get('title', 'Unknown Project')
+                recommended_manager = doc.metadata.get('manager', 'Unknown Manager')
                 
                 candidate_info = {
-                    "project": project_title,
-                    "manager": project_info['manager'],
-                    "query_text": query_text,
-                    "matched_content": doc.page_content,
-                    "recommended_manager": recommended_manager,
-                    "similarity_score": score, # 存入四捨五入後的分數
-                    "matched_doc_id": doc.metadata.get('title', 'N/A'),
-                    "collection_field": col_name
+                    "apply_project": project_title,            # 申請案名稱
+                    "manager": project_info['manager'],  # 申請人
+                    "query_text": query_text,                  # 搜尋文本
+                    "recommended_project": recommended_title,  # ★ 推薦的歷史計畫名稱
+                    "recommended_manager": recommended_manager,# 該歷史計畫的主持人
+                    "similarity_score": score,                 # 相似度分數
+                    "matched_content": doc.page_content,       # 具體比對到的文字
+                    "collection_field": col_name               # 比對的欄位
                 }
-                # 比對分數邏輯
-                if recommended_manager in best_candidates:
-                    # 如果分數比較高，就更新
-                    if score > best_candidates[recommended_manager]['similarity_score']:
-                        best_candidates[recommended_manager] = candidate_info
-                    # ★ 建議 4: 如果分數「一樣」，則不動作 (保留原本的)
-                    # 因為我們已經四捨五入過了，所以這裡的「一樣」是真的由數值決定，而不是浮點數誤差
+                
+                # ★ 核心修改：以「計畫名稱 (recommended_title)」作為去重依據
+                if recommended_title in best_candidates:
+                    if score > best_candidates[recommended_title]['similarity_score']:
+                        best_candidates[recommended_title] = candidate_info
                 else:
-                    best_candidates[recommended_manager] = candidate_info
+                    best_candidates[recommended_title] = candidate_info
             
-            # ★ 建議 5: 搜尋完後，這裡再把所有候選人依照分數排序，只取前 30 名存檔
-            # 這樣比直接讓 Chroma 截斷更穩定
+            # 依照分數排序，每個申請案取前 30 個「最相似的計畫」
             candidates_sorted = sorted(best_candidates.values(), key=lambda x: x['similarity_score'], reverse=True)
-            final_candidates = candidates_sorted[:30] # 只取前 30 名寫入 Excel
+            final_candidates = candidates_sorted[:30] 
             
             results_list.extend(final_candidates)
             
+        # 將該類別的結果存入對應的 Excel Sheet
         save_data(output_file, results_list, col_name)
 
     print("\n🎉 全部搜尋完成！")

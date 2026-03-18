@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from tqdm.auto import tqdm
 import os
 
-ollama_client = ollama.Client(host='http://140.115.54.63:11434')
+ollama_client = ollama.Client(host='http://localhost:1228')
 
 prompt = '''
 你是一位專門分析科研計畫摘要的助理。請從提供的計畫摘要中準確擷取以下四個關鍵要素：
@@ -39,7 +39,7 @@ schema = {
         "application_directions": {"type": "string","description": "此計畫的應用方向為何"},
         "problems_to_solve": {"type": "string","description": "此計畫預計要解決的問題為何"},
         "goals_to_achieve": {"type": "string","description": "此計畫預計要達成的目標為何"},
-        "methods_to_solve": {"type": "string","description": "此計畫預計要使用的解決方法為何"},
+        "methods_to_solve": {"type": "string","description": "此計畫預計要使用的解決方法為何"}
     },
     "required": [
         "application_directions",
@@ -96,7 +96,6 @@ def generate_by_file(file,years,output_file):
                 # 移除索引欄位（如果不需要）
                 if 'Index' in project_dict:
                     del project_dict['Index']
-                
                 # 獲取摘要
                 abstract = project_dict['中文摘要']
                 if isinstance(abstract, str):
@@ -112,7 +111,7 @@ def generate_by_file(file,years,output_file):
                 project_dict["problems_to_solve"] = raw_data.get("problems_to_solve", "")
                 project_dict["goals_to_achieve"] = raw_data.get("goals_to_achieve", "")
                 project_dict["methods_to_solve"] = raw_data.get("methods_to_solve", "")
-                
+                project_dict["keywords"] = raw_data.get("keywords", "")
                 # 將項目添加到結果 DataFrame
                 results_df = pd.concat([results_df, pd.DataFrame([project_dict])], ignore_index=True)
                 
@@ -168,17 +167,17 @@ def generate_by_file(file,years,output_file):
 
 def main():
     # print('---start pass project abstract generation---')
-    # path_file_path = 'data/industry_coop/108-112產學計畫E41申請名冊.xlsx'
+    # path_file_path = 'data/industry_coop/108-114核定計畫名單(含關鍵字與摘要)20260223_產學計畫案.xlsx'
     # pass_project_excel_file = pd.ExcelFile(path_file_path)
-    # years = ['專題計畫綜合查詢']
-    # pass_output_file = "data/industry_coop/pass_project_with_abstract.xlsx"
+    # years = ['108-114']
+    # pass_output_file = "data/industry_coop/pass_project_with_abstract_108-114.xlsx"
     # generate_by_file(pass_project_excel_file, years, pass_output_file)
 
     print('---start apply project abstract generation---')
-    apply_file_path = 'data/research_proj/115計算機學門審查/(給張老師)請推薦書審委員_115年度青穗學者計畫(智慧計算) 20260223.xlsx'
+    apply_file_path = 'data/research_proj/115計算機學門審查/附件一_115技專預推名冊(E41)智慧計算.xlsx'
     apply_project_excel_file = pd.ExcelFile(apply_file_path)
-    apply_years = ['test']
-    apply_output_file = "data/research_proj/115計算機學門審查/apply_project_with_abstract(青穗學者計畫).xlsx"
+    apply_years = ['預推名冊(E41智慧計算)']
+    apply_output_file = "data/research_proj/115計算機學門審查/apply_project_with_abstract(附件一_115技專預推名冊(E41)智慧計算).xlsx"
     generate_by_file(apply_project_excel_file, apply_years, apply_output_file)
 if __name__ == "__main__":
     main()

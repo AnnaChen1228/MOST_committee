@@ -23,7 +23,7 @@ def load_data(file_path, pages):
                 '學校': school,
                 '職稱': job_title,
                 '系所': department,
-                '年份': page
+                '年份': str(row['年份']).strip() if '年份' in row.keys() else page
             })
             
     return authors
@@ -55,8 +55,8 @@ def filiter_school(department_full):
 
 
 def main():
-    data_file = 'data/industry_coop/108-112產學計畫E41申請名冊.xlsx'
-    years = ['專題計畫綜合查詢']
+    data_file = 'data/industry_coop/pass_project_with_abstract_108-114.xlsx'
+    years = ['108-114']
     research_store_file_path = 'data/research_proj/115計算機學門審查/pass_project_with_abstract.xlsx'
     research_years = ['108','109','110','111','112','113','114']
     # 1. 獲取資料列表
