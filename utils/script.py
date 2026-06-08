@@ -1,5 +1,6 @@
 from itertools import chain
 import json
+import shutil
 import tqdm
 import chromadb
 import re
@@ -9,7 +10,6 @@ import ast
 import sys
 import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
 
 import openpyxl
 from openpyxl.styles import PatternFill
@@ -21,83 +21,157 @@ from utils.load_former_manager import get_former_manager
 
 from utils.get_setting import setting_data, print_setting_data, find_key_path, value_of_key
 from utils.filter_method import *
-
+from utils.store_vectordb import store_basic_vector_db, store_abstract_vector_db
+from utils.generate_abstract import local_generate 
 class MissingFieldsException(Exception):
     pass
 
-def load_into_chroma_bge_manager(is_industry=False):
-    # Blacklist of fields to be removed
+def load_into_chroma_bge_manager(is_industry=False, progress_callback=None):
+    # 讀取黑名單
     blacklist_csv_path = find_key_path("退休或黑名單委員")
     blacklist_df = pd.read_csv(blacklist_csv_path, encoding='utf-8')
     blacklist = blacklist_df['姓名'].tolist()
     print(f"黑名單或是已退休委員:", blacklist)
     
-    # Determine the Chroma database path based on the industry flag
-    chroma_db_key = 'CHROMA_INDUSTRY' if is_industry else 'CHROMA'
-    chroma_db_path = find_key_path(chroma_db_key)
-    client = chromadb.PersistentClient(path=chroma_db_path)
-    collection_name = chroma_db_key
-    
-    client.delete_collection(collection_name)
-    collection = client.create_collection(collection_name)
+    # 決定資料庫路徑
+    if is_industry:
+        chroma_basic_path = find_key_path('CHROMA_BASIC_INDUSTRY')
+        chroma_abstract_path = find_key_path('CHROMA_ABSTRACT_INDUSTRY')
+        db_type = 'industry'
+    else:
+        chroma_basic_path = find_key_path('CHROMA_BASIC')
+        chroma_abstract_path = find_key_path('CHROMA_ABSTRACT')
+        db_type = 'research'
 
-    # Retrieve the relevant dataframes based on the industry flag
+    # ================= 新增：清空舊的 Collection =================
+    print("正在清理舊的向量資料庫...")
+    if os.path.exists(chroma_basic_path):
+        try:
+            shutil.rmtree(chroma_basic_path)
+            print(f"已成功刪除並重置資料夾: {chroma_basic_path}")
+        except Exception as e:
+            print(f"刪除 {chroma_basic_path} 失敗: {e}")
+
+    # 清理 Abstract 資料庫
+    if os.path.exists(chroma_abstract_path):
+        try:
+            shutil.rmtree(chroma_abstract_path)
+            print(f"已成功刪除並重置資料夾: {chroma_abstract_path}")
+        except Exception as e:
+            print(f"刪除 {chroma_abstract_path} 失敗: {e}")
+    # ============================================================
+
+    # 取得對應的 Dataframes
     df_list = get_industry_coop_proj() if is_industry else get_project_df()
 
-    manager_group = {}
+    project_data = {} # 用來存放給 store_basic_vector_db 和 store_abstract_vector_db 的資料
+    manager_group = {} # 保留原本產出 JSON 的邏輯 (依主持人分組)
+
     for key, year_data in df_list.items():
+        # key 通常是年度 (pass_year)
+        # for i in tqdm.tqdm(range(len(year_data)), desc=str(key)):
+        total_items = len(year_data)
         for i in tqdm.tqdm(range(len(year_data)), desc=key):
+            # 【關鍵加入】如果 GUI 有傳入進度更新函式，就呼叫它來更新畫面
+            if progress_callback:
+                # 傳入：目前第幾筆(i+1), 總共幾筆, 目前的年份(key)
+                progress_callback(i + 1, total_items, str(key))
             row = year_data.iloc[i]
             
-            manager = year_data.iloc[i]['計畫主持人']
-            project_name = row.get('計畫中文名稱', '') or ''
-            abstract = row.get('中文摘要', '') or ''
-            keywords = row.get('中文關鍵字', '') or ''
+            manager = str(row.get('計畫主持人', '')).strip()
+            if not manager or manager.lower() == 'nan':
+                continue
+                
+            project_name = str(row.get('計畫中文名稱', '') or '').strip()
+            abstract = str(row.get('中文摘要', '') or '').strip()
+            keywords = str(row.get('中文關鍵字', '') or '').strip()
             approved = str(row.get('通過', 'false')).strip().lower()
             
-            # Skip projects that are not approved when not dealing with industry data
+            # 產學資料以外，跳過未通過的計畫
             if not is_industry and approved != 'true':  
                 continue
             
-            # Skip managers in the blacklist
+            # 跳過黑名單
             if manager in blacklist:
                 continue
             
-            # Concatenate the project information
-            text = f"{project_name} {abstract} {keywords}\n"
+            # 呼叫 LLM 進行摘要拆解
+            parsed_abstract = {}
+            if abstract and abstract.lower() != 'nan':
+                try:
+                    # 呼叫您寫好的 local_generate
+                    response = local_generate(abstract)
+                    # 將 LLM 回傳的 JSON 字串轉為 Python 字典
+                    parsed_abstract = json.loads(response.message.content)
+                except json.JSONDecodeError:
+                    print(f"警告: LLM 回傳的格式非有效 JSON，計畫名稱: {project_name}")
+                except RuntimeError as e:
+                    # 【關鍵修改】如果捕捉到伺服器超時的 RuntimeError，直接往上拋出！
+                    # 這樣就會立刻中斷迴圈，並一路傳遞到 execute_mode 顯示錯誤視窗
+                    raise e
+                except Exception as e:
+                    print(f"解析摘要發生錯誤，計畫名稱: {project_name}, 錯誤: {e}")
+
+            # 準備寫入向量資料庫的資料格式 (以 project_name 為 key)
+            if project_name:
+                project_data[project_name] = {
+                    'host_name': manager,
+                    'pass_year': key,
+                    'title': project_name,
+                    'keywords': keywords,
+                    'application_directions': parsed_abstract.get('application_directions', ''),
+                    'problems_to_solve': parsed_abstract.get('problems_to_solve', ''),
+                    'goals_to_achieve': parsed_abstract.get('goals_to_achieve', ''),
+                    'methods_to_solve': parsed_abstract.get('methods_to_solve', '')
+                }
             
-            # Group by manager, appending project information
+            # 保留原本的 Manager Group 邏輯，用於輸出傳統的 JSON 檔案
+            text_for_json = f"{project_name} {abstract} {keywords}\n"
             if manager in manager_group:
-                manager_group[manager] += f"\n{text}"
+                manager_group[manager] += f"\n{text_for_json}"
             else:
-                manager_group[manager] = text
+                manager_group[manager] = text_for_json
 
-    # Save the manager data into the Chroma database
-    for manager, text in tqdm.tqdm(manager_group.items(), desc="Saving to Chroma"):
-        # Attempt to calculate embeddings with a max of 3 retries
-        embeddings = None
-        for _ in range(3):
-            embeddings = calculate_docs_embedding_zh([text])
-            if embeddings:
-                break
+    # 呼叫您自定義的儲存函式 (LangChain Chroma Wrapper)
+    print(f"\n開始將 Basic 資料寫入 ChromaDB ({db_type})...")
+    if progress_callback:
+        # 傳入 0, 0，並寫上提示文字
+        progress_callback(0, 0, f"正在將 Basic 資料寫入資料庫...")
         
-        # Upsert manager's project data into the Chroma collection
-        collection.upsert(
-            documents=[text],
-            ids=[manager],
-            embeddings=embeddings,
-            metadatas=[{'manager': manager}]
-        )
+    store_basic_vector_db(db_type, project_data)
 
-    # Determine the path for saving manager group data
+    print(f"開始將 Abstract 資料寫入 ChromaDB ({db_type})...")
+    if progress_callback:
+        progress_callback(0, 0, f"正在將 Abstract 資料寫入資料庫...")
+        
+    store_abstract_vector_db(db_type, project_data)
+
+    # 決定 JSON 儲存路徑並儲存 (保留原本的 BGE_MANAGER JSON 輸出)
     bge_manager_key = "BGE_INDUSTRY_MANAGER" if is_industry else "BGE_MANAGER"
     bge_manager_path = find_key_path(bge_manager_key)
-    
-    # Save manager group data to a JSON file
+        
     with open(bge_manager_path, 'w', encoding='utf-8') as f:
         json.dump(manager_group, f, ensure_ascii=False)
+    print(f"已成功儲存主持人 JSON 至: {bge_manager_path}")
 
+    pass_data_store_key = "PASS_INDUSTRY" if is_industry else "PASS_RESEARCH"
+    pass_data_store_path = find_key_path(pass_data_store_key)
+    # 1. 先將所有資料轉成 DataFrame
+    df = pd.DataFrame(list(project_data.values()))
 
+    # 2. 使用 ExcelWriter 來建立多個 Sheet
+    # engine='openpyxl' 是寫入 .xlsx 必備的引擎
+    with pd.ExcelWriter(pass_data_store_path, engine='openpyxl') as writer:
+        
+        # 3. 依照 'pass_year' 進行分組 (groupby)
+        for year, group_df in df.groupby('pass_year'):
+            
+            # 確保 Sheet 名稱是字串 (例如 "112", "113")
+            sheet_name = str(year)
+            
+            # 將該年份的資料寫入對應的 Sheet 中
+            group_df.to_excel(writer, sheet_name=sheet_name, index=False)
+    print(f"已成功儲存通過案件資料至: {pass_data_store_path}")
 
 def search_v3(is_industry=False):
     
