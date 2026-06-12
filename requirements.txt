@@ -156,3 +156,4 @@ PyQt6_sip==13.10.0
 matplotlib
 jieba
 seaborn
+ollama

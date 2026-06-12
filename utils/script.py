@@ -173,165 +173,236 @@ def load_into_chroma_bge_manager(is_industry=False, progress_callback=None):
             group_df.to_excel(writer, sheet_name=sheet_name, index=False)
     print(f"已成功儲存通過案件資料至: {pass_data_store_path}")
 
-def search_v3(is_industry=False):
-    
-    # 取得計畫相關的欄位值
-    tabs = value_of_key("計畫SHEET")
+def search_v3(is_industry=False, progress_callback=None):
 
-    # 取得輸出 Excel 檔案的資料夾路徑
+    tabs = value_of_key("計畫SHEET")
     output_excel_folder_path = find_key_path("統計表分析")
 
-    # 判斷「研究計畫」與「產學合作」的資料庫路徑
+    # 研究計畫 DB 為預設；產學模式額外加入產學 DB（各輸出獨立 sheet）
+    excel_folder_path = find_key_path("產學合作申請名冊") if is_industry else find_key_path("研究計畫申請名冊")
+    search_configs = [
+        {
+            'label':    '研究計畫' if is_industry else None,
+            'basic':    find_key_path('CHROMA_BASIC'),
+            'abstract': find_key_path('CHROMA_ABSTRACT'),
+        }
+    ]
     if is_industry:
-        chroma_db_path = find_key_path('CHROMA_INDUSTRY')
-        vectorstore = Chroma("CHROMA_INDUSTRY", persist_directory=chroma_db_path, embedding_function=get_embeddings_zh())
-        excel_folder_path = find_key_path("產學合作申請名冊")
-    else:
-        chroma_db_path = find_key_path('CHROMA')
-        vectorstore = Chroma("CHROMA", persist_directory=chroma_db_path, embedding_function=get_embeddings_zh())
-        excel_folder_path = find_key_path("研究計畫申請名冊")
-        
+        search_configs.append({
+            'label':    '產學合作',
+            'basic':    find_key_path('CHROMA_BASIC_INDUSTRY'),
+            'abstract': find_key_path('CHROMA_ABSTRACT_INDUSTRY'),
+        })
+
     former_manager = get_former_manager(find_key_path("曾任委員"))
-    
-    # 要輸出的欄位
+
+    WEIGHTS = {
+        'title': 1, 'keywords': 1,
+        'application_directions': 3, 'problems_to_solve': 3,
+        'goals_to_achieve': 1, 'methods_to_solve': 1,
+    }
+    TOTAL_W = sum(WEIGHTS.values())
+
     other_fields = value_of_key("計畫相關其他欄位")
     required_fields = []
-    keys = [
-        "計畫名稱",
-        "中文關鍵字",
-        "計劃摘要",
-        "職稱",
-        "申請主持人欄位名稱",
-        "申請機構欄位名稱",
-        
-    ]
-    for key in keys:
+    for key in ["計畫名稱", "中文關鍵字", "計劃摘要", "職稱", "申請主持人欄位名稱", "申請機構欄位名稱"]:
         temp_value = value_of_key(key)
         if temp_value is not None and temp_value != '':
             required_fields.append(temp_value)
-        
-    multi_keys = [
-        "申請共同主持人"
-    ]
-    for key in multi_keys:
-        temp_value = value_of_key(key)
-        for value in temp_value:
-            if value not in required_fields and value != '':
-                required_fields.append(value)
-    
+    for key in ["申請共同主持人"]:
+        for v in value_of_key(key):
+            if v not in required_fields and v != '':
+                required_fields.append(v)
     filter_fields = required_fields + [f for f in other_fields if f not in required_fields]
 
-    RECOMMAND_AMOUNT = 10   # 要推薦的委員數量
-    SELECT_AMOUNT = 3       # 要選擇的委員數量
+    RECOMMAND_AMOUNT = 10
+    SELECT_AMOUNT    = 3
     SELECT_BOX_SYMBOL = ['Y', 'Z', 'AA']
 
-    xls = pd.ExcelFile(excel_folder_path)
+    xls    = pd.ExcelFile(excel_folder_path)
     writer = pd.ExcelWriter(output_excel_folder_path, engine='openpyxl')
-    
+
     similarity_record_path = f"./data/output/similarity_record_{value_of_key('FINAL_COMMITTEE')}"
     os.makedirs(os.path.dirname(similarity_record_path), exist_ok=True)
-    similarity_df = pd.DataFrame(columns=["query_text", "compared_text", "recommended_manager", "model_name", "similarity_score"])
-    
+    similarity_rows = []
+    parsed_rows  = []
+    parse_cache  = {}  # { tab: [parsed_abstract_dict, ...] }
+
+    project_name_field_name    = value_of_key("計畫名稱")
+    chinese_keyword_field_name = value_of_key("中文關鍵字")
+    abstract_field_name        = value_of_key("計劃摘要")
+    apply_manager_field_name   = value_of_key("申請主持人欄位名稱")
+
     try:
-        project_name_field_name = value_of_key("計畫名稱")
-        chinese_keyword_field_name = value_of_key("中文關鍵字")
-        abstract_field_name = value_of_key("計劃摘要")
-        
+        # ── Phase 1：LLM 拆解所有申請資料（全部跑完再進比對）──
         for tab in tabs:
-            page_manager_list = []
+            df_parse = pd.read_excel(xls, tab)
+            parse_cache[tab] = []
+            total_parse = len(df_parse)
+            for i in tqdm.tqdm(range(total_parse), desc=f"摘要拆解({tab})"):
+                project_name  = str(df_parse.iloc[i].get(project_name_field_name,   '') or '').strip()
+                keywords      = str(df_parse.iloc[i].get(chinese_keyword_field_name, '') or '').strip()
+                abstract      = str(df_parse.iloc[i].get(abstract_field_name,        '') or '').strip()
+                apply_manager = str(df_parse.iloc[i].get(apply_manager_field_name,   '') or '').strip()
+                parsed_abstract = {}
+                if abstract and abstract.lower() != 'nan':
+                    try:
+                        response = local_generate(abstract)
+                        parsed_abstract = json.loads(response.message.content)
+                    except RuntimeError as e:
+                        raise e
+                    except Exception as e:
+                        print(f"解析摘要失敗: {project_name}, 錯誤: {e}")
+                parse_cache[tab].append(parsed_abstract)
+                parsed_rows.append({
+                    'tab':                    tab,
+                    'apply_project':          project_name,
+                    'apply_manager':          apply_manager,
+                    'keywords':               keywords,
+                    'abstract':               abstract,
+                    'application_directions': parsed_abstract.get('application_directions', ''),
+                    'problems_to_solve':      parsed_abstract.get('problems_to_solve', ''),
+                    'goals_to_achieve':       parsed_abstract.get('goals_to_achieve', ''),
+                    'methods_to_solve':       parsed_abstract.get('methods_to_solve', ''),
+                })
+                if progress_callback:
+                    progress_callback(i + 1, total_parse, f"摘要拆解({tab})")
 
-            # define column name
-            df = pd.read_excel(xls, tab)
-            
-            # 檢查 filter_fields 是否在現有的欄位中
-            existing_fields = df.columns.tolist()
-            missing_fields = [field for field in filter_fields if field not in existing_fields]
-            if missing_fields:
-                print("現有欄位:", existing_fields)
-                print("應當欄位:", filter_fields)
-                raise ValueError("欄位不匹配，程式碼運行停止")  # 引發例外，中止程式碼運行
+        pd.DataFrame(parsed_rows).to_excel(find_key_path("申請計畫拆解結果"), index=False)
 
-            df = df[filter_fields]
-
-            for i in range(RECOMMAND_AMOUNT):
-                df['推薦委員' + str(i + 1)] = ''
-                df['相關分數' + str(i + 1)] = ''
-            df['前任委員占比'] = ''
-            for i in range(SELECT_AMOUNT):
-                df['選取委員' + str(i + 1)] = ''
-
-            # process data
-            for i in tqdm.tqdm(range(len(df)), desc=tab):
-                manager_list = []
-                project_name = df.iloc[i].get(project_name_field_name, '')
-                keywords = df.iloc[i].get(chinese_keyword_field_name, '')
-                abstract = df.iloc[i].get(abstract_field_name, '')
-                
-                # 找尋相似度
-                current_text_combine = f"{project_name} {keywords} {abstract}"
-                documents = vectorstore.similarity_search_with_relevance_scores(
-                    current_text_combine,
-                    k=RECOMMAND_AMOUNT
+        # ── Phase 2：向量相似度比對（每個 DB config 各跑一輪）──
+        for cfg in search_configs:
+            db_label = cfg['label']
+            if progress_callback:
+                progress_callback(0, 0, f"進行{db_label}資料庫的相似度比對...")
+            embedding_fn = get_embeddings_zh()
+            vectorstores = {}
+            for col in ['title', 'keywords']:
+                vectorstores[col] = Chroma(
+                    collection_name=col,
+                    persist_directory=cfg['basic'],
+                    embedding_function=embedding_fn
                 )
-                
-                # 將搜尋結果寫入 CSV
-                for doc, score in documents:
-                    recommended_manager = doc.metadata['manager'] 
-                    compared_text = doc.page_content  # 可根據需求選擇不同內容
-                    model_name = "BGE_ZH"  # 依實際使用的模型名稱
-                    
-                    # 追加數據
-                    new_row = pd.DataFrame([{
-                        "query_text": current_text_combine,
-                        "compared_text": compared_text,
-                        "recommended_manager": recommended_manager,
-                        "model_name": model_name,
-                        "similarity_score": score
-                    }])
-                    
-                    new_row = new_row.reindex(columns=similarity_df.columns)
-                    if not new_row.empty and not new_row.isna().all(axis=None):
-                        similarity_df = pd.concat([similarity_df, new_row], ignore_index=True)
+            for col in ['application_directions', 'problems_to_solve', 'goals_to_achieve', 'methods_to_solve']:
+                vectorstores[col] = Chroma(
+                    collection_name=col,
+                    persist_directory=cfg['abstract'],
+                    embedding_function=embedding_fn
+                )
 
-        
-                # 分數填入 Excel 的動作 (和原程式邏輯相同)
-                for j, (doc, score) in enumerate(documents):
-                    df.loc[df.index[i], '推薦委員' + str(j + 1)] = doc.metadata['manager']
-                    manager_list.append(doc.metadata['manager'])
-                    df.loc[df.index[i], '相關分數' + str(j + 1)] = score
+            for tab in tabs:
+                sheet_name = f"{tab}_{db_label}" if db_label else tab
+                page_manager_list = []
 
-                page_manager_list.append(manager_list)
-                df.loc[df.index[i], '前任委員占比'] = len([x for x in manager_list if x in former_manager]) / RECOMMAND_AMOUNT
+                df = pd.read_excel(xls, tab)
 
-            df.to_excel(writer, sheet_name=tab, index=False)
+                existing_fields = df.columns.tolist()
+                missing_fields  = [f for f in filter_fields if f not in existing_fields]
+                if missing_fields:
+                    print("現有欄位:", existing_fields)
+                    print("應當欄位:", filter_fields)
+                    raise ValueError("欄位不匹配，程式碼運行停止")
 
-            # setup dropdown list
-            workbook = writer.book
-            worksheet = workbook[tab]
+                df = df[filter_fields]
 
-            for j in range(SELECT_AMOUNT):
-                for i, manager_list in enumerate(page_manager_list):
-                    data_range = ','.join(manager_list)
-                    dv = DataValidation(type="list", formula1=f'"{data_range}"', allow_blank=True)
-                    dv.add(SELECT_BOX_SYMBOL[j] + str(i + 2))
-                    worksheet.add_data_validation(dv)
+                for i in range(RECOMMAND_AMOUNT):
+                    df['推薦委員' + str(i + 1)] = ''
+                    df['相關分數' + str(i + 1)] = ''
+                df['前任委員占比'] = ''
+                for i in range(SELECT_AMOUNT):
+                    df['選取委員' + str(i + 1)] = ''
 
-            highligh_former_manager(writer, tab, former_manager, output_excel_folder_path)
-            draw_color_for_similarity_score(writer, tab, output_excel_folder_path)
+                total_items = len(df)
+                for i in tqdm.tqdm(range(total_items), desc=f"{sheet_name}"):
+                    manager_list    = []
+                    project_name    = str(df.iloc[i].get(project_name_field_name,   '') or '').strip()
+                    keywords        = str(df.iloc[i].get(chinese_keyword_field_name, '') or '').strip()
+                    apply_manager   = str(df.iloc[i].get(apply_manager_field_name,   '') or '').strip()
+                    parsed_abstract = parse_cache[tab][i]
+
+                    query_texts = {
+                        'title':                  project_name,
+                        'keywords':               keywords,
+                        'application_directions': parsed_abstract.get('application_directions', ''),
+                        'problems_to_solve':      parsed_abstract.get('problems_to_solve', ''),
+                        'goals_to_achieve':       parsed_abstract.get('goals_to_achieve', ''),
+                        'methods_to_solve':       parsed_abstract.get('methods_to_solve', ''),
+                    }
+
+                    manager_proj_scores = {}
+                    for field, query_text in query_texts.items():
+                        if not query_text or not query_text.strip():
+                            continue
+                        w = WEIGHTS[field]
+                        results = vectorstores[field].similarity_search_with_relevance_scores(
+                            query_text, k=RECOMMAND_AMOUNT * 3
+                        )
+                        for doc, score in results:
+                            key = (doc.metadata['manager'], doc.metadata['title'])
+                            manager_proj_scores[key] = manager_proj_scores.get(key, 0) + score * w
+                            similarity_rows.append({
+                                'db_source':           db_label or '研究計畫',
+                                'apply_project':       project_name,
+                                'apply_manager':       apply_manager,
+                                'field':               field,
+                                'field_weight':        w,
+                                'query_text':          query_text,
+                                'recommended_manager': doc.metadata['manager'],
+                                'recommended_project': doc.metadata['title'],
+                                'compared_text':       doc.page_content,
+                                'field_score':         score,
+                            })
+
+                    best_per_manager = {}
+                    for (rec_manager, rec_proj), weighted_sum in manager_proj_scores.items():
+                        final_score = weighted_sum / TOTAL_W
+                        if rec_manager not in best_per_manager or final_score > best_per_manager[rec_manager]['score']:
+                            best_per_manager[rec_manager] = {'score': final_score, 'project': rec_proj}
+
+                    sorted_managers = sorted(
+                        best_per_manager.items(),
+                        key=lambda x: x[1]['score'],
+                        reverse=True
+                    )[:RECOMMAND_AMOUNT]
+
+                    for j, (rec_manager, info) in enumerate(sorted_managers):
+                        df.loc[df.index[i], '推薦委員' + str(j + 1)] = rec_manager
+                        df.loc[df.index[i], '相關分數' + str(j + 1)] = info['score']
+                        manager_list.append(rec_manager)
+
+                    page_manager_list.append(manager_list)
+                    df.loc[df.index[i], '前任委員占比'] = len([x for x in manager_list if x in former_manager]) / RECOMMAND_AMOUNT
+
+                df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+                workbook  = writer.book
+                worksheet = workbook[sheet_name]
+
+                for j in range(SELECT_AMOUNT):
+                    for i, manager_list in enumerate(page_manager_list):
+                        data_range = ','.join(manager_list)
+                        dv = DataValidation(type="list", formula1=f'"{data_range}"', allow_blank=True)
+                        dv.add(SELECT_BOX_SYMBOL[j] + str(i + 2))
+                        worksheet.add_data_validation(dv)
+
+                highligh_former_manager(writer, sheet_name, former_manager, output_excel_folder_path)
+                draw_color_for_similarity_score(writer, sheet_name, output_excel_folder_path)
 
     except Exception as e:
         if not writer.book.sheetnames:
             print("ERROR")
             writer.book.create_sheet(title="Error")
-        raise  # 重新引發異常以停止程式
+        raise
 
     finally:
-        # 確保 ExcelWriter 正常關閉
-        writer.close()  
+        writer.close()
+        similarity_df = pd.DataFrame(similarity_rows)
+        fields = ['title', 'keywords', 'application_directions', 'problems_to_solve', 'goals_to_achieve', 'methods_to_solve']
         with pd.ExcelWriter(similarity_record_path, engine='openpyxl') as similarity_writer:
-            similarity_df.to_excel(similarity_writer, sheet_name="Similarity Records", index=False)
-            
-            
+            for field in fields:
+                field_df = similarity_df[similarity_df['field'] == field] if not similarity_df.empty else pd.DataFrame()
+                field_df.to_excel(similarity_writer, sheet_name=field, index=False)
+
 def draw_color_for_similarity_score(writer, tab, output_excel):
     
     from openpyxl.formatting.rule import ColorScaleRule
@@ -445,10 +516,10 @@ def statistic_committee():
     for index, row in industry_data.iterrows():
         committee_person_RDF.append({
             '名稱': row['計畫主持人'],
-            '年份': row["計畫編號"][:3] if not pd.isna(row["計畫編號"]) else "",
+            '年份': row["申請年度"],
             '機關名稱': row['單位名稱'],
             '職稱': row['職稱'],
-            "來源": f"產學合作 - 序號:{row['序號']}"
+            # "來源": f"產學合作 - 序號:{row['序號']}"
         })
     
     committee_person_RDF_df = pd.DataFrame(committee_person_RDF)
@@ -488,11 +559,11 @@ def filter_committee(is_industry=False):
     writer = pd.ExcelWriter(find_key_path("過濾相近後統計表"), engine='openpyxl')
     
     #@ 審查委員不能與計劃申請學校有關
-    for sheet in statistical_analysis_file.sheet_names:
-        current_sheet_statistical_excel_data = pd.read_excel(statistical_analysis_file, sheet_name=sheet)
+    for stat_sheet in statistical_analysis_file.sheet_names:
+        current_sheet_statistical_excel_data = pd.read_excel(statistical_analysis_file, sheet_name=stat_sheet)
         result_dict = []
         all_apply_members = current_sheet_statistical_excel_data[value_of_key("申請主持人欄位名稱")].to_list() # 所有申請人
-        
+
         for index, statistical_row in current_sheet_statistical_excel_data.iterrows():
         # ~ 每個統計表的 row.
         
@@ -594,8 +665,8 @@ def filter_committee(is_industry=False):
             statistical_row["篩選原因"] = total_committee_person_dict_result["Filter Reasons"]
             
             result_dict.append(statistical_row)
-            
-        pd.DataFrame(result_dict).to_excel(writer, sheet_name=sheet, index=False)
+
+        pd.DataFrame(result_dict).to_excel(writer, sheet_name=stat_sheet, index=False)
     writer.close()
 
 def filter_committee_remove(is_industry=False):
@@ -779,33 +850,28 @@ def excel_process_VBA():
 
     gap = 2
     range_count = 10
-    
-    #: load the excel data.
+
     talent_workbook, talent_sheet = load_data(find_key_path("統計清單人才資料_RDF"))
-    committee_workbook, committee_sheet = load_data(find_key_path("過濾相近後統計表"))
-    out_count = committee_sheet.max_column - ( range_count * gap ) - 6
-    
-    start_index = out_count + 1 
-    letter_index = generate_letters_excel(start_index, gap, range_count) # start_index = Excel 26 進制的索引
-    # timeline = [start_index + i * gap for i in range(range_count)]  
-    
-    add_comments(committee_sheet, talent_sheet, columns_to_comment=letter_index)
-    pink_fill = PatternFill(start_color='FFC0CB', end_color='FFC0CB', fill_type='solid') #= 填色
-    
-    header_value = committee_sheet.cell(row=1, column=start_index).value
-    print("[起頭] 第 {} 欄之標題為：{}".format(start_index, header_value))
+    committee_workbook = openpyxl.load_workbook(find_key_path("過濾相近後統計表"))
+    pink_fill = PatternFill(start_color='FFC0CB', end_color='FFC0CB', fill_type='solid')
 
-    # 檢查 AB, 滿足條件改色
-    for row in committee_sheet.iter_rows(min_row=2, max_col=committee_sheet.max_column):
-        filter_list = ast.literal_eval(row[-2].value)
-        
-        #- 若有重複的的部分進行圖色（篩選委員）
-        for col_letter in letter_index:
-            col_index = column_index_from_string(col_letter) - 1
-            if row[col_index].value in filter_list:
-                row[col_index].fill = pink_fill
+    for committee_sheet in committee_workbook.worksheets:
+        out_count    = committee_sheet.max_column - (range_count * gap) - 6
+        start_index  = out_count + 1
+        letter_index = generate_letters_excel(start_index, gap, range_count)
 
-    # 保存
+        add_comments(committee_sheet, talent_sheet, columns_to_comment=letter_index)
+
+        header_value = committee_sheet.cell(row=1, column=start_index).value
+        print("[{}] 第 {} 欄之標題為：{}".format(committee_sheet.title, start_index, header_value))
+
+        for row in committee_sheet.iter_rows(min_row=2, max_col=committee_sheet.max_column):
+            filter_list = ast.literal_eval(row[-2].value)
+            for col_letter in letter_index:
+                col_index = column_index_from_string(col_letter) - 1
+                if row[col_index].value in filter_list:
+                    row[col_index].fill = pink_fill
+
     committee_workbook.save(find_key_path("FINAL_COMMITTEE"))
     print(f"[結束] 已經保存至: {find_key_path('FINAL_COMMITTEE')}")
 

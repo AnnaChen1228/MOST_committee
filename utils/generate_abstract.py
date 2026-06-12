@@ -6,9 +6,9 @@ from utils.get_setting import setting_data, print_setting_data, find_key_path, v
 ollama_client = ollama.Client(
     host=value_of_key('OLLAMA_HOST'),  # 替換成你的 Ollama 伺服器地址和端口
 )
-# auth_str = f"{value_of_key('OLLAMA_USER')}:{value_of_key('OLLAMA_PASSWORD')}"
-# b64_auth = base64.b64encode(auth_str.encode('utf-8')).decode('utf-8')
-# ollama_client._client.headers["Authorization"] = f"Basic {b64_auth}"
+auth_str = f"{value_of_key('OLLAMA_USER')}:{value_of_key('OLLAMA_PASSWORD')}"
+b64_auth = base64.b64encode(auth_str.encode('utf-8')).decode('utf-8')
+ollama_client._client.headers["Authorization"] = f"Basic {b64_auth}"
 MODEL_NAME = value_of_key('LLM_MODEL_NAME')
 
 SYSTEMPROMPT = '''
@@ -52,7 +52,7 @@ SCHEMA = {
     ],
 }
 
-def local_generate(abstract_text, timeout_seconds=60):
+def local_generate(abstract_text, timeout_seconds=120):
     userPrompt = f"請分析以下科研計畫摘要，並擷取四個關鍵要素：\n\n{abstract_text}"
     messages = [
         {"role": "system", "content": SYSTEMPROMPT},

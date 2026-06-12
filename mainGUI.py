@@ -70,7 +70,7 @@ def execute_mode(mode, current_plan, root_window):
                 # 如果其他函式也有迴圈，也可以比照辦理傳入 progress_callback
                 update_peronsal_info_database(is_industry)
                 statistic_committee() 
-                search_v3(is_industry) 
+                search_v3(is_industry, progress_callback=update_progress)
                 filter_committee(is_industry) 
                 excel_process_VBA()
                 root_window.after(0, lambda: finish_task("success", "成功", "已成功輸出推薦委員"))
@@ -83,7 +83,8 @@ def execute_mode(mode, current_plan, root_window):
                 root_window.after(0, lambda: finish_task("error", "執行錯誤", error_msg))
                 
         except Exception as e:
-            root_window.after(0, lambda: finish_task("error", "未預期錯誤", f"發生錯誤：{str(e)}"))
+            error_str = str(e)
+            root_window.after(0, lambda: finish_task("error", "未預期錯誤", f"發生錯誤：{error_str}"))
 
     # ================= 5. 啟動背景執行緒 =================
     threading.Thread(target=background_task, daemon=True).start()
