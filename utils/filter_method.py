@@ -122,16 +122,16 @@ def filter_committee_advanced(
         for school_type, member_field in filter_pairs:
             if school_type in schools_info and schools_info[school_type]:
                 school_list = schools_info[school_type] if isinstance(schools_info[school_type], list) else [schools_info[school_type]]
-                print(schools_info["申請人名稱"])
-                print(school_list)
+                # print(schools_info["申請人名稱"])
+                # print(school_list)
                 for member in committee_members:
-                    print(member['委員名稱'])
-                    print(member[member_field])
+                    # print(member['委員名稱'])
+                    # print(member[member_field])
                     matching_schools = [school for school in member[member_field] if school in school_list and school]
                     if matching_schools:
                         filtered_members.add(member['委員名稱'])
                         filter_reasons[member['委員名稱']] = f"{school_type} 與 {member_field} ({', '.join(matching_schools)}) 重疊"
-                print('----')
+                # print('----')
     # 3. 根據職稱進行過濾
     if whether_to_execute_the_option["是否過濾職稱"]:
         for member in committee_members:

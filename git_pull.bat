@@ -5,7 +5,7 @@ cd /d %~dp0
 git reset --hard HEAD
 
 :: Change the remote URL to HTTPS
-git remote set-url origin https://github.com/Chrouos/MOST_committee.git
+git remote set-url origin https://github.com/AnnaChen1228/MOST_committee.git
 
 :: Pull the latest changes from the remote repository
 git pull

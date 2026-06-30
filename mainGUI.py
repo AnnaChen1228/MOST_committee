@@ -1,7 +1,9 @@
 ﻿import tkinter as tk
 from tkinter import messagebox, ttk  # 新增 ttk 用來畫進度條
 import threading                     # 新增 threading 用於背景執行
-from utils.get_setting import value_of_key
+import os
+from datetime import datetime
+from utils.get_setting import value_of_key, set_run_output_dir
 from utils.script import load_into_chroma_bge_manager, update_peronsal_info_database, search_v3, filter_committee, excel_process_VBA, statistic_committee
 from utils.get_setting import setting_data
 
@@ -67,13 +69,32 @@ def execute_mode(mode, current_plan, root_window):
                 root_window.after(0, lambda: finish_task("success", "成功", "資料已成功存入資料庫"))
                 
             elif mode == '輸出推薦委員':
+                # 以「審查檔案名稱_時間」建立本次審查的專屬輸出資料夾
+                if is_industry:
+                    review_file = value_of_key("產學合作申請名冊")
+                else:
+                    review_file = value_of_key("研究計畫申請名冊")
+                review_name = os.path.splitext(os.path.basename(str(review_file)))[0]
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                run_dir = os.path.join("./data/output", f"{review_name}_{timestamp}")
+                set_run_output_dir(run_dir)
+
                 # 如果其他函式也有迴圈，也可以比照辦理傳入 progress_callback
                 update_peronsal_info_database(is_industry)
-                statistic_committee() 
+                statistic_committee()
                 search_v3(is_industry, progress_callback=update_progress)
-                filter_committee(is_industry) 
+                filter_committee(is_industry)
                 excel_process_VBA()
-                root_window.after(0, lambda: finish_task("success", "成功", "已成功輸出推薦委員"))
+
+                # 組出結果位置與名稱，顯示在跳出的視窗中（路徑從 output 起算，檔案只寫名稱）
+                final_file_name = value_of_key("FINAL_COMMITTEE")
+                run_dir_display = os.path.join("output", f"{review_name}_{timestamp}")
+                done_message = (
+                    "已成功輸出推薦委員\n\n"
+                    f"結果資料夾：\n{run_dir_display}\n\n"
+                    f"最終推薦結果檔案：\n{final_file_name}"
+                )
+                root_window.after(0, lambda: finish_task("success", "成功", done_message))
                 
         except RuntimeError as e:
             error_msg = str(e)

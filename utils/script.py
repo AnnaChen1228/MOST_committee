@@ -19,12 +19,27 @@ from utils.load_source_excel import get_project_df, get_industry_coop_proj
 from langchain_community.vectorstores.chroma import Chroma
 from utils.load_former_manager import get_former_manager
 
-from utils.get_setting import setting_data, print_setting_data, find_key_path, value_of_key
+from utils.get_setting import setting_data, print_setting_data, find_key_path, value_of_key, get_run_output_dir
 from utils.filter_method import *
 from utils.store_vectordb import store_basic_vector_db, store_abstract_vector_db
-from utils.generate_abstract import local_generate 
+from utils.generate_abstract import local_generate
 class MissingFieldsException(Exception):
     pass
+
+# 推薦委員「依據哪一個過去計畫被推薦」的對應表檔名（存於本次審查資料夾）
+REC_MAP_FILENAME = "推薦依據計畫對應.json"
+# 較深候選池檔名（供過濾後遞補使用）
+REC_POOL_FILENAME = "推薦候選池.json"
+# 過濾後遞補的合格委員名單檔名（filter_committee 產出，供過濾後分頁使用）
+FILTERED_TOP_FILENAME = "過濾後合格委員.json"
+
+def _make_rec_map_key(sheet_name, project_name, manager):
+    '''建立 (分頁, 申請計畫名稱, 推薦委員) 的對應鍵值。'''
+    return f"{sheet_name}|||{str(project_name).strip()}|||{str(manager).strip()}"
+
+def _make_pool_key(sheet_name, project_name):
+    '''建立 (分頁, 申請計畫名稱) 的對應鍵值。'''
+    return f"{sheet_name}|||{str(project_name).strip()}"
 
 def load_into_chroma_bge_manager(is_industry=False, progress_callback=None):
     # 讀取黑名單
@@ -215,15 +230,21 @@ def search_v3(is_industry=False, progress_callback=None):
                 required_fields.append(v)
     filter_fields = required_fields + [f for f in other_fields if f not in required_fields]
 
-    RECOMMAND_AMOUNT = 10
+    RECOMMAND_AMOUNT = 10   # 原始表顯示的推薦委員數量（欄位數，請勿隨意更動，著色邏輯有相依）
+    POOL_SIZE        = 30   # 候選池大小：過濾後若不足 RECOMMAND_AMOUNT 位會從此池遞補
     SELECT_AMOUNT    = 3
     SELECT_BOX_SYMBOL = ['Y', 'Z', 'AA']
 
     xls    = pd.ExcelFile(excel_folder_path)
     writer = pd.ExcelWriter(output_excel_folder_path, engine='openpyxl')
 
-    similarity_record_path = f"./data/output/similarity_record_{value_of_key('FINAL_COMMITTEE')}"
+    run_output_dir = get_run_output_dir() or "./data/output"
+    similarity_record_path = os.path.join(run_output_dir, f"similarity_record_{value_of_key('FINAL_COMMITTEE')}")
     os.makedirs(os.path.dirname(similarity_record_path), exist_ok=True)
+    # 推薦委員「依據哪一個過去計畫被推薦」：key = (分頁, 申請計畫, 委員) -> 過去計畫名稱
+    recommend_project_map = {}
+    # 較深的候選池（供過濾後遞補使用）：key = (分頁, 申請計畫) -> [{manager, score, project}, ...]
+    recommend_pool_map = {}
     similarity_rows = []
     parsed_rows  = []
     parse_cache  = {}  # { tab: [parsed_abstract_dict, ...] }
@@ -359,11 +380,25 @@ def search_v3(is_industry=False, progress_callback=None):
                         if rec_manager not in best_per_manager or final_score > best_per_manager[rec_manager]['score']:
                             best_per_manager[rec_manager] = {'score': final_score, 'project': rec_proj}
 
-                    sorted_managers = sorted(
+                    ranked_managers = sorted(
                         best_per_manager.items(),
                         key=lambda x: x[1]['score'],
                         reverse=True
-                    )[:RECOMMAND_AMOUNT]
+                    )
+                    # 較深的候選池（供過濾後遞補），原始表仍只顯示前 RECOMMAND_AMOUNT 名
+                    pool_managers   = ranked_managers[:POOL_SIZE]
+                    sorted_managers = ranked_managers[:RECOMMAND_AMOUNT]
+
+                    # 整池都記錄「推薦依據計畫」，遞補進來的委員之後也能顯示依據
+                    pool_records = []
+                    for rec_manager, info in pool_managers:
+                        recommend_project_map[_make_rec_map_key(sheet_name, project_name, rec_manager)] = info['project']
+                        pool_records.append({
+                            'manager': rec_manager,
+                            'score':   info['score'],
+                            'project': info['project'],
+                        })
+                    recommend_pool_map[_make_pool_key(sheet_name, project_name)] = pool_records
 
                     for j, (rec_manager, info) in enumerate(sorted_managers):
                         df.loc[df.index[i], '推薦委員' + str(j + 1)] = rec_manager
@@ -396,6 +431,14 @@ def search_v3(is_industry=False, progress_callback=None):
 
     finally:
         writer.close()
+        # 輸出「推薦依據計畫對應表」供後續加上註解使用
+        rec_map_path = os.path.join(run_output_dir, REC_MAP_FILENAME)
+        with open(rec_map_path, 'w', encoding='utf-8') as f:
+            json.dump(recommend_project_map, f, ensure_ascii=False)
+        # 輸出「候選池」供 filter_committee 做過濾與遞補
+        rec_pool_path = os.path.join(run_output_dir, REC_POOL_FILENAME)
+        with open(rec_pool_path, 'w', encoding='utf-8') as f:
+            json.dump(recommend_pool_map, f, ensure_ascii=False)
         similarity_df = pd.DataFrame(similarity_rows)
         fields = ['title', 'keywords', 'application_directions', 'problems_to_solve', 'goals_to_achieve', 'methods_to_solve']
         with pd.ExcelWriter(similarity_record_path, engine='openpyxl') as similarity_writer:
@@ -438,10 +481,21 @@ def highligh_former_manager(writer, tab, former_manager, output_excel):
 def statistic_committee():
     
     apply_project_file_year = value_of_key("計畫過去申請案件年分範圍")
-    
-    statistic_folder_path = find_key_path("統計清單") 
-    statistic_excel_file = pd.ExcelFile(statistic_folder_path)
-    
+
+    # 統計清單（比較清單）為選用：未提供或檔案不存在時，跳過「研究計劃（統計案件）」這個來源
+    statistic_value = value_of_key("統計清單")
+    statistic_excel_file = None
+    statistic_sheets = []
+    if statistic_value:
+        statistic_folder_path = find_key_path("統計清單")
+        if os.path.exists(statistic_folder_path):
+            statistic_excel_file = pd.ExcelFile(statistic_folder_path)
+            statistic_sheets = statistic_excel_file.sheet_names
+        else:
+            print(f"警告: 找不到統計清單檔案 {statistic_folder_path}，將跳過研究計劃（統計案件）來源。")
+    else:
+        print("提示: 未提供統計清單（比較清單），將跳過研究計劃（統計案件）來源。")
+
     industry_folder_path = find_key_path("產學過去申請名冊")
     industry_data = pd.read_excel(industry_folder_path)
     
@@ -499,18 +553,22 @@ def statistic_committee():
             })
         
         
-    #: 研究計劃（統計案件）
-    for year in apply_project_file_year:
-        current_sheet = f"{year}總計畫清單"
-        statistic_df = pd.read_excel(statistic_excel_file, current_sheet)
-        for index, row in tqdm.tqdm(statistic_df.iterrows(), desc=f"{current_sheet}"):
-            committee_person_RDF.append({
-                '名稱': row['計畫主持人'],
-                '年份': year,
-                '機關名稱': row['機關名稱'],
-                '職稱': row.get('職稱', '教授'),
-                "來源": f"研究計劃（統計案件）- {current_sheet}"
-            })
+    #: 研究計劃（統計案件）— 未提供統計清單則整段跳過
+    if statistic_excel_file is not None:
+        for year in apply_project_file_year:
+            current_sheet = f"{year}總計畫清單"
+            if current_sheet not in statistic_sheets:
+                print(f"警告: 統計清單中找不到「{current_sheet}」分頁，跳過該年度統計案件來源。")
+                continue
+            statistic_df = pd.read_excel(statistic_excel_file, current_sheet)
+            for index, row in tqdm.tqdm(statistic_df.iterrows(), desc=f"{current_sheet}"):
+                committee_person_RDF.append({
+                    '名稱': row['計畫主持人'],
+                    '年份': year,
+                    '機關名稱': row['機關名稱'],
+                    '職稱': row.get('職稱', '教授'),
+                    "來源": f"研究計劃（統計案件）- {current_sheet}"
+                })
             
     #: 產學合作
     for index, row in industry_data.iterrows():
@@ -554,10 +612,20 @@ def filter_committee(is_industry=False):
     
     committee_person_path = find_key_path("統計清單人才資料_RDF_UNI")
     committee_person_RDF_df = pd.read_excel(committee_person_path)
-    
+
+    #: 載入 search_v3 產出的較深候選池（供過濾後遞補）
+    run_output_dir = get_run_output_dir() or "./data/output"
+    rec_pool_path = os.path.join(run_output_dir, REC_POOL_FILENAME)
+    recommend_pool_map = {}
+    if os.path.exists(rec_pool_path):
+        with open(rec_pool_path, 'r', encoding='utf-8') as f:
+            recommend_pool_map = json.load(f)
+    BACKFILL_TARGET = 10  # 過濾後每案要補到的合格委員人數
+    filtered_top_map = {}  # key = (分頁, 申請計畫) -> [{manager, score}, ...]（已遞補、最多 BACKFILL_TARGET 位）
+
     #- Strategy
     writer = pd.ExcelWriter(find_key_path("過濾相近後統計表"), engine='openpyxl')
-    
+
     #@ 審查委員不能與計劃申請學校有關
     for stat_sheet in statistical_analysis_file.sheet_names:
         current_sheet_statistical_excel_data = pd.read_excel(statistical_analysis_file, sheet_name=stat_sheet)
@@ -567,29 +635,35 @@ def filter_committee(is_industry=False):
         for index, statistical_row in current_sheet_statistical_excel_data.iterrows():
         # ~ 每個統計表的 row.
         
-            # = 審查委員的背景
+            # = 審查委員的背景（改用較深的候選池，過濾後才有足夠人選遞補）
+            project_name_value = statistical_row[value_of_key("計畫名稱")]
+            pool_records = recommend_pool_map.get(_make_pool_key(stat_sheet, project_name_value), [])
+            # 候選人依分數排序（pool 本來就照分數），記錄順序與分數供遞補使用
+            pool_order        = [rec['manager'] for rec in pool_records]
+            pool_score_lookup = {rec['manager']: rec['score'] for rec in pool_records}
+
             committee_person_dict = []
-            for index_of_committee in range(1, 11):
-            # ~ 推薦委員 10 人
-                
+            for rec in pool_records:
+                committee_name = rec['manager']
+
                 # 委員過去待過的學校
                 been_list = []
-                find_temp_df = committee_person_RDF_df[committee_person_RDF_df["名稱"] == statistical_row[f'推薦委員{index_of_committee}']]
-                for index, row in find_temp_df.iterrows(): 
+                find_temp_df = committee_person_RDF_df[committee_person_RDF_df["名稱"] == committee_name]
+                for index, row in find_temp_df.iterrows():
                     been_list.append(row["學校"])
-                been_list = list(set(been_list)) 
-                
-                # 委員過去畢業的學校
-                graduate_list = []
-                relate_school = find_crawler_person_relative_school(f'推薦委員{index_of_committee}', crawler_RDF_data)
-                graduate_list.extend(list(set(relate_school)))
-                
-                # 委員職稱
+                been_list = list(set(been_list))
+
+                # 委員過去畢業的學校（以真正的委員姓名查詢）
+                graduate_list = list(set(find_crawler_person_relative_school(committee_name, crawler_RDF_data)))
+
+                # 委員職稱（人才資料庫_UNI 每人一列，取該列職稱）
+                committee_title = find_temp_df['職稱'].iloc[0] if not find_temp_df.empty else ""
+
                 committee_person_dict.append({
-                    "委員名稱": statistical_row[f'推薦委員{index_of_committee}'],
+                    "委員名稱": committee_name,
                     "委員曾就職學校": been_list,
                     "委員過去畢業學校": graduate_list,
-                    "職稱": find_temp_df['職稱']
+                    "職稱": committee_title
                 })
                 
             # = 申請學校 + 主持人學校 + 共同主持人學校
@@ -663,11 +737,24 @@ def filter_committee(is_industry=False):
             #- Reason
             statistical_row["篩掉人員"] = total_committee_person_dict_result["Filtered Members"]
             statistical_row["篩選原因"] = total_committee_person_dict_result["Filter Reasons"]
-            
+
+            #- 過濾後遞補：依分數順序取未被篩掉者，補到 BACKFILL_TARGET 位
+            filtered_out = set(total_committee_person_dict_result["Filtered Members"])
+            backfilled = [
+                {"manager": m, "score": pool_score_lookup.get(m, "")}
+                for m in pool_order if m not in filtered_out
+            ][:BACKFILL_TARGET]
+            filtered_top_map[_make_pool_key(stat_sheet, project_name_value)] = backfilled
+
             result_dict.append(statistical_row)
 
         pd.DataFrame(result_dict).to_excel(writer, sheet_name=stat_sheet, index=False)
     writer.close()
+
+    #: 輸出過濾後遞補的合格委員名單，供 excel_process_VBA 建立「_過濾後」分頁
+    filtered_top_path = os.path.join(run_output_dir, FILTERED_TOP_FILENAME)
+    with open(filtered_top_path, 'w', encoding='utf-8') as f:
+        json.dump(filtered_top_map, f, ensure_ascii=False)
 
 def filter_committee_remove(is_industry=False):
     #: 1. 預先載入資料 (移出迴圈以提升效能)
@@ -810,11 +897,16 @@ def generate_letters_excel(start_index, gap, count):
         letters.append(index_to_excel_column(letter_index))
     return letters
 
-def add_comments(target_ws, data_ws, columns_to_comment):
+def add_comments(target_ws, data_ws, columns_to_comment, project_map=None, map_sheet_name=None):
     """
-        在目標工作表上添加註釋
+        在目標工作表上添加註釋。
+        project_map: { "分頁|||申請計畫|||委員": 過去計畫名稱 }，
+                     用於在註解中加上「此委員是依據哪一個過去計畫被推薦」。
+        map_sheet_name: 查 project_map 時使用的分頁名稱（過濾後分頁名稱已改動，
+                        需指定原始分頁名稱才能對應）；未指定時用 target_ws.title。
     """
-    
+    map_sheet_name = map_sheet_name or target_ws.title
+
     # columns_to_comment = ['D', 'F', 'H', 'J', 'L', 'N', 'P', 'R', 'T', 'V']  # 需要添加註釋的欄位
 
     # 建立名稱與詳細資訊的對應字典
@@ -828,20 +920,40 @@ def add_comments(target_ws, data_ws, columns_to_comment):
         # f"來源: {data_ws.cell(row=i, column=5).value}"
         for i in range(2, data_ws.max_row + 1)
     }
-    
+
     headers = [cell.value for cell in data_ws[1]]  # 取得第一列的標題名稱
     source_index = headers.index('來源') + 1  # Excel 的索引從 1 開始
-    print("來源欄位的索引位置:", source_index)
-    print("欄位名稱:", headers)
+    # print("來源欄位的索引位置:", source_index)
+    # print("欄位名稱:", headers)
+
+    # 找出目標工作表中「計畫名稱」欄位的位置，用來查 project_map
+    project_name_field = value_of_key("計畫名稱")
+    target_headers = [cell.value for cell in target_ws[1]]
+    proj_col_idx = target_headers.index(project_name_field) + 1 if project_name_field in target_headers else None
 
     # 在每個指定欄位添加註釋
     for col in columns_to_comment:
         for cell in target_ws[col]:
+            if not cell.value:
+                continue
+
+            comment_parts = []
             if cell.value in name_to_details:
-                comment_text = name_to_details[cell.value]
+                comment_parts.append(name_to_details[cell.value])
+
+            # 加上「推薦依據計畫」
+            if project_map and proj_col_idx:
+                apply_project = target_ws.cell(row=cell.row, column=proj_col_idx).value
+                based_project = project_map.get(_make_rec_map_key(map_sheet_name, apply_project, cell.value))
+                if based_project:
+                    comment_parts.append(f"推薦依據計畫: {based_project}")
+
+            if comment_parts:
+                # 各段去掉尾端換行再接，避免「推薦依據計畫」與前面多空一行
+                comment_text = "\n".join(part.rstrip("\n") for part in comment_parts)
                 comment = openpyxl.comments.Comment(comment_text, "Python Script")
-                comment.width = 350  # 設置寬度
-                comment.height = 100  # 設置高度
+                comment.width = 350   # 設置寬度
+                comment.height = 120  # 設置高度
                 cell.comment = comment
                 
 def excel_process_VBA():
@@ -855,22 +967,79 @@ def excel_process_VBA():
     committee_workbook = openpyxl.load_workbook(find_key_path("過濾相近後統計表"))
     pink_fill = PatternFill(start_color='FFC0CB', end_color='FFC0CB', fill_type='solid')
 
-    for committee_sheet in committee_workbook.worksheets:
+    run_output_dir = get_run_output_dir() or "./data/output"
+
+    # 載入「推薦依據計畫對應表」（由 search_v3 產出）
+    rec_map_path = os.path.join(run_output_dir, REC_MAP_FILENAME)
+    recommend_project_map = {}
+    if os.path.exists(rec_map_path):
+        with open(rec_map_path, 'r', encoding='utf-8') as f:
+            recommend_project_map = json.load(f)
+
+    # 載入「過濾後遞補的合格委員名單」（由 filter_committee 產出）
+    filtered_top_path = os.path.join(run_output_dir, FILTERED_TOP_FILENAME)
+    filtered_top_map = {}
+    if os.path.exists(filtered_top_path):
+        with open(filtered_top_path, 'r', encoding='utf-8') as f:
+            filtered_top_map = json.load(f)
+
+    project_name_field = value_of_key("計畫名稱")
+    no_fill = PatternFill(fill_type=None)
+
+    # 先取得原始分頁清單（稍後會新增「_過濾後」分頁，避免邊迭代邊新增）
+    original_sheets = list(committee_workbook.worksheets)
+
+    for committee_sheet in original_sheets:
         out_count    = committee_sheet.max_column - (range_count * gap) - 6
         start_index  = out_count + 1
-        letter_index = generate_letters_excel(start_index, gap, range_count)
+        manager_cols = generate_letters_excel(start_index, gap, range_count)        # 推薦委員 1..10
+        score_cols   = generate_letters_excel(start_index + 1, gap, range_count)    # 相關分數 1..10
 
-        add_comments(committee_sheet, talent_sheet, columns_to_comment=letter_index)
+        # 找出此分頁「計畫名稱」欄位位置（給過濾後分頁查 backfill 用）
+        target_headers = [c.value for c in committee_sheet[1]]
+        proj_col_idx = target_headers.index(project_name_field) + 1 if project_name_field in target_headers else None
+
+        # ===== 原始分頁：加註解、被篩掉者標粉紅 =====
+        add_comments(committee_sheet, talent_sheet, columns_to_comment=manager_cols, project_map=recommend_project_map)
 
         header_value = committee_sheet.cell(row=1, column=start_index).value
         print("[{}] 第 {} 欄之標題為：{}".format(committee_sheet.title, start_index, header_value))
 
         for row in committee_sheet.iter_rows(min_row=2, max_col=committee_sheet.max_column):
             filter_list = ast.literal_eval(row[-2].value)
-            for col_letter in letter_index:
+            for col_letter in manager_cols:
                 col_index = column_index_from_string(col_letter) - 1
                 if row[col_index].value in filter_list:
                     row[col_index].fill = pink_fill
+
+        # ===== 過濾後分頁：移除被篩掉者、由候選池遞補到 10 位 =====
+        filtered_sheet = committee_workbook.copy_worksheet(committee_sheet)
+        filtered_sheet.title = (committee_sheet.title + "_過濾後")[:31]
+
+        for row in filtered_sheet.iter_rows(min_row=2, max_col=filtered_sheet.max_column):
+            apply_project = row[proj_col_idx - 1].value if proj_col_idx else None
+            backfilled = filtered_top_map.get(_make_pool_key(committee_sheet.title, apply_project), [])
+
+            for k, (m_letter, s_letter) in enumerate(zip(manager_cols, score_cols)):
+                m_idx = column_index_from_string(m_letter) - 1
+                s_idx = column_index_from_string(s_letter) - 1
+                if k < len(backfilled):
+                    row[m_idx].value = backfilled[k]['manager']
+                    row[s_idx].value = backfilled[k]['score']
+                else:
+                    row[m_idx].value = None
+                    row[s_idx].value = None
+                row[m_idx].fill = no_fill       # 清掉由原分頁複製來的粉紅標記
+                row[m_idx].comment = None       # 清掉複製來的舊註解，稍後重新加上
+
+        # 過濾後分頁重新加註解（用原始分頁名稱查推薦依據計畫）
+        add_comments(filtered_sheet, talent_sheet, columns_to_comment=manager_cols,
+                     project_map=recommend_project_map, map_sheet_name=committee_sheet.title)
+
+        # 讓「_過濾後」分頁緊接在對應原始分頁之後
+        sheets = committee_workbook._sheets
+        sheets.remove(filtered_sheet)
+        sheets.insert(sheets.index(committee_sheet) + 1, filtered_sheet)
 
     committee_workbook.save(find_key_path("FINAL_COMMITTEE"))
     print(f"[結束] 已經保存至: {find_key_path('FINAL_COMMITTEE')}")

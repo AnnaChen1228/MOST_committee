@@ -6,6 +6,28 @@ setting_data = None
 with open('./setting.yaml', 'r', encoding='utf-8') as file:
     setting_data = yaml.safe_load(file)
 
+# - 本次審查專屬的輸出資料夾（執行時由 GUI 設定）
+#   設定後，下列「每次審查產出的結果/過程檔案」會改存到此資料夾，
+#   其餘（如人才資料庫等需跨次保留的檔案）維持原本位置。
+_RUN_OUTPUT_DIR = None
+_RUN_OUTPUT_KEYS = {
+    "統計表分析",        # 推薦表統合與分析
+    "過濾相近後統計表",
+    "FINAL_COMMITTEE",   # 最終推薦表
+    "申請計畫拆解結果",
+}
+
+def set_run_output_dir(path):
+    '''設定本次審查的輸出資料夾，若不存在則建立。'''
+    global _RUN_OUTPUT_DIR
+    _RUN_OUTPUT_DIR = path
+    if path and not os.path.exists(path):
+        os.makedirs(path)
+
+def get_run_output_dir():
+    '''取得本次審查的輸出資料夾（未設定時回傳 None）。'''
+    return _RUN_OUTPUT_DIR
+
 # - 找到路徑過程
 def find_key_path_list(dictionary, target_key, path=''):
     for key, value in dictionary.items():
@@ -23,15 +45,20 @@ def find_key_path_list(dictionary, target_key, path=''):
 
 # - 輸出路徑
 def find_key_path(target_key):
-    result_text = "."
     path_list = find_key_path_list(setting_data, target_key)
-    for node in path_list[1:]:
-        result_text = result_text + "/" + node
-        
+
+    # 本次審查的結果/過程檔案 → 改存到本次審查專屬資料夾
+    if _RUN_OUTPUT_DIR and target_key in _RUN_OUTPUT_KEYS and path_list:
+        result_text = os.path.join(_RUN_OUTPUT_DIR, path_list[-1])
+    else:
+        result_text = "."
+        for node in path_list[1:]:
+            result_text = result_text + "/" + node
+
     directory = os.path.dirname(result_text)
-    if not os.path.exists(directory):
+    if directory and not os.path.exists(directory):
         os.makedirs(directory)
-        
+
     return result_text
 
 # - 直接找到資料 value
