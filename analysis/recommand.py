@@ -54,9 +54,9 @@ def load_apply_data(file_path, pages):
             df = pd.read_excel(file_path, sheet_name=page, dtype=str).fillna("")
             for _, row in df.iterrows():
                 title = str(row.get('研習主題') or row.get('計畫名稱') or "").strip()
-                no =  str(row.get('No.')).strip()
+                no =  str(row.get('計畫編號')).strip()
                 if not title: continue
-                school, dept = filiter_school(row.get('主持人現職機關'))
+                school, dept = filiter_school(row.get('申請機構'))
                 
                 # 處理共同主持人
                 co_m, co_s = [], []
@@ -73,7 +73,7 @@ def load_apply_data(file_path, pages):
                             co_m.append(item.strip())
                 apply_dicts[title] = {
                     'no': no,
-                    'manager': str(row['申請人']).strip(),
+                    'manager': str(row['主持人']).strip(),
                     'managerSchool': school,
                     'coManger': co_m,
                     'coSchool': co_s
@@ -122,7 +122,7 @@ def save_results_with_highlight(results, output_filename, reviewer_school_map, r
     for project in results.keys():
         info = results[project]
         # 基礎資料
-        row = {"No.": info['no'], "計畫名稱": project, '申請人': info['manager'], "主持人現職機關": info['school']}
+        row = {"計畫編號": info['no'], "計畫名稱": project, '主持人': info['manager'], "申請機構": info['school']}
         
         reasons_list = [] # 用來收集這一案前 10 名的衝突理由
         
@@ -184,7 +184,7 @@ def save_results_clean(results, output_filename):
     excel_rows = []
     for project in results.keys():
         info = results[project]
-        row = {"No.": info['no'], "計畫名稱": project, "申請人": info['manager'], "主持人現職機關": info['school'], "過濾原因": info.get('filter_reason_str', "")}
+        row = {"計畫編號": info['no'], "計畫名稱": project, "主持人": info['manager'], "申請機構": info['school'], "過濾原因": info.get('filter_reason_str', "")}
         
         for i, cand in enumerate(info.get('final_candidates', [])[:10]):
             row[f"推薦委員 {i+1}"] = cand['name']; row[f"相似度分數 {i+1}"] = cand['score']; row[f"推薦委員學校 {i+1}"] = cand.get('school', '') 
@@ -210,9 +210,9 @@ def check_path(path):
 
 # --- 5. 主程式 ---
 def main():
-    apply_path = 'data/research_proj/115計算機學門審查/青穗學者/apply_project_with_abstract(青穗學者計畫new).xlsx'
+    apply_path = 'data/research_proj/115計算機學門審查/瑞典/apply_project_with_abstract(計畫書資料).xlsx'
     check_path(apply_path)
-    input_score_file = 'data/research_proj/115計算機學門審查/青穗學者/result_score(青穗學者計畫new_research).xlsx'
+    input_score_file = 'data/research_proj/115計算機學門審查/瑞典/result_score(計畫書資料_research).xlsx'
     check_path(input_score_file)
     committee_uni_file = 'data/RDF_database/committee_all_education_with_advisor.xlsx'
     check_path(committee_uni_file)
@@ -221,7 +221,7 @@ def main():
     industry = True # 產學|研究計畫(過濾本次申請人)
     apply_data = {}
     # 讀取資料
-    apply_data = load_apply_data(apply_path, ['推薦書審委員_115工程處智慧計算青穗申請案'])
+    apply_data = load_apply_data(apply_path, ['計畫書資料'])
     if industry:
         all_applicants_set = set(info['manager'] for info in apply_data.values() if info['manager'])
     else:
@@ -244,7 +244,7 @@ def main():
     blacklist = pd.read_csv(blacklist_path)['姓名'].astype(str).tolist() if os.path.exists(blacklist_path) else []
 
     # 上色存檔
-    save_results_with_highlight(result, 'data/research_proj/115計算機學門審查/青穗學者/recommendation_results_org_colored(青穗學者計畫new_research).xlsx', reviewer_school_map, reviewer_advisor_map, blacklist, all_applicants_set)
+    save_results_with_highlight(result, 'data/research_proj/115計算機學門審查/瑞典/recommendation_results_org_colored(計畫書資料).xlsx', reviewer_school_map, reviewer_advisor_map, blacklist, all_applicants_set)
     # 過濾與紀錄理由
     for proj, info in result.items():
         filtered, reasons = [], []
@@ -268,7 +268,7 @@ def main():
             info['filter_reason_str'] = "[" + ";".join(reasons) + ";]"
         else:
             info['filter_reason_str'] = "[]"
-    save_results_clean(result, 'data/research_proj/115計算機學門審查/青穗學者/recommendation_results_filter(青穗學者計畫new_research).xlsx')
+    save_results_clean(result, 'data/research_proj/115計算機學門審查/瑞典/recommendation_results_filter(計畫書資料).xlsx')
 
 if __name__ == "__main__":
     main()

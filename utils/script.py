@@ -26,12 +26,16 @@ from utils.generate_abstract import local_generate
 class MissingFieldsException(Exception):
     pass
 
-# 推薦委員「依據哪一個過去計畫被推薦」的對應表檔名（存於本次審查資料夾）
+# 中間過程 JSON 存於 temp/ 子資料夾，最終輸出資料夾只留三支結果檔
+_TEMP_SUBDIR = "temp"
 REC_MAP_FILENAME = "推薦依據計畫對應.json"
-# 較深候選池檔名（供過濾後遞補使用）
 REC_POOL_FILENAME = "推薦候選池.json"
-# 過濾後遞補的合格委員名單檔名（filter_committee 產出，供過濾後分頁使用）
 FILTERED_TOP_FILENAME = "過濾後合格委員.json"
+
+def _temp_path(run_dir, filename):
+    path = os.path.join(run_dir, _TEMP_SUBDIR, filename)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    return path
 
 def _make_rec_map_key(sheet_name, project_name, manager):
     '''建立 (分頁, 申請計畫名稱, 推薦委員) 的對應鍵值。'''
@@ -432,11 +436,11 @@ def search_v3(is_industry=False, progress_callback=None):
     finally:
         writer.close()
         # 輸出「推薦依據計畫對應表」供後續加上註解使用
-        rec_map_path = os.path.join(run_output_dir, REC_MAP_FILENAME)
+        rec_map_path = _temp_path(run_output_dir, REC_MAP_FILENAME)
         with open(rec_map_path, 'w', encoding='utf-8') as f:
             json.dump(recommend_project_map, f, ensure_ascii=False)
         # 輸出「候選池」供 filter_committee 做過濾與遞補
-        rec_pool_path = os.path.join(run_output_dir, REC_POOL_FILENAME)
+        rec_pool_path = _temp_path(run_output_dir, REC_POOL_FILENAME)
         with open(rec_pool_path, 'w', encoding='utf-8') as f:
             json.dump(recommend_pool_map, f, ensure_ascii=False)
         similarity_df = pd.DataFrame(similarity_rows)
@@ -601,17 +605,45 @@ def filter_committee(is_industry=False):
     #: Load the data
     crawler_RDF_folder_path = find_key_path("碩博士論文_RDF")
     crawler_RDF_data = pd.read_excel(crawler_RDF_folder_path)
-    
-    statistical_analysis_folder_path = find_key_path("統計表分析") 
+
+    statistical_analysis_folder_path = find_key_path("統計表分析")
     statistical_analysis_file = pd.ExcelFile(statistical_analysis_folder_path)
-    
+
     if is_industry: apply_list_folder_path = find_key_path("產學合作申請名冊")
-    else: apply_list_folder_path = find_key_path("研究計畫申請名冊") 
-        
+    else: apply_list_folder_path = find_key_path("研究計畫申請名冊")
+
     apply_list_file = pd.ExcelFile(apply_list_folder_path)
-    
+
     committee_person_path = find_key_path("統計清單人才資料_RDF_UNI")
     committee_person_RDF_df = pd.read_excel(committee_person_path)
+
+    #: 載入委員指導教授資料（路徑由 setting.yaml 的「委員指導教授資料」決定）
+    advisor_data_path = find_key_path("委員指導教授資料")
+    advisor_lookup = {}   # {人名 -> set(指導教授名稱)}
+    student_lookup = {}   # {指導教授名稱 -> set(學生名稱)}
+    if os.path.exists(advisor_data_path):
+        advisor_df = pd.read_excel(advisor_data_path)
+        for _, adv_row in advisor_df.iterrows():
+            person = str(adv_row.get('名稱', '')).strip()
+            if not person or person == 'nan':
+                continue
+            advisors = set()
+            for col in ['博士指導教授', '碩士指導教授']:
+                raw = str(adv_row.get(col, '')).replace('\xa0', '').strip()
+                if not raw or raw in ('nan', '未找到'):
+                    continue
+                # 以 ／ 拆分多位指導教授（爬蟲格式：姓名１／姓名２）
+                for part in raw.split('／'):
+                    part = part.strip()
+                    if len(part) >= 2:
+                        advisors.add(part)
+            if advisors:
+                advisor_lookup[person] = advisor_lookup.get(person, set()) | advisors
+        for student, advisors in advisor_lookup.items():
+            for adv in advisors:
+                student_lookup.setdefault(adv, set()).add(student)
+    else:
+        print(f"警告: 找不到委員指導教授資料檔案 {advisor_data_path}，將跳過師生關係過濾。")
 
     #: 載入 search_v3 產出的較深候選池（供過濾後遞補）
     run_output_dir = get_run_output_dir() or "./data/output"
@@ -712,10 +744,10 @@ def filter_committee(is_industry=False):
                         "助研究員": ["教授", "研究員"] # 助研究員不能審教授或研究員
                     }
                     current_committee_person_dict_result = filter_committee_advanced(
-                        apply_school, 
-                        committee_person_dict, 
-                        filter_pairs, 
-                        all_apply_members, 
+                        apply_school,
+                        committee_person_dict,
+                        filter_pairs,
+                        all_apply_members,
                         TITLE_RESTRICTIONS,
                         whether_to_execute_the_option= {
                             "是否過濾申請人": True if is_industry else False,
@@ -725,6 +757,13 @@ def filter_committee(is_industry=False):
                         }
                     )
                     total_committee_person_dict_result = merge_committee_advanced(total_committee_person_dict_result, current_committee_person_dict_result)
+
+                    #~ 師生關係過濾：申請人的指導教授 / 曾受申請人指導者 不得審查
+                    applicant_name_str = str(row.get(value_of_key("申請主持人欄位名稱"), '')).strip()
+                    advisor_filter_result = filter_committee_by_advisor(
+                        applicant_name_str, committee_person_dict, advisor_lookup, student_lookup
+                    )
+                    total_committee_person_dict_result = merge_committee_advanced(total_committee_person_dict_result, advisor_filter_result)
                     
                     
                 if len(find_temp_df) > 0: break #= 找不到東西，跳掉
@@ -752,7 +791,7 @@ def filter_committee(is_industry=False):
     writer.close()
 
     #: 輸出過濾後遞補的合格委員名單，供 excel_process_VBA 建立「_過濾後」分頁
-    filtered_top_path = os.path.join(run_output_dir, FILTERED_TOP_FILENAME)
+    filtered_top_path = _temp_path(run_output_dir, FILTERED_TOP_FILENAME)
     with open(filtered_top_path, 'w', encoding='utf-8') as f:
         json.dump(filtered_top_map, f, ensure_ascii=False)
 
@@ -977,7 +1016,7 @@ def excel_process_VBA():
             recommend_project_map = json.load(f)
 
     # 載入「過濾後遞補的合格委員名單」（由 filter_committee 產出）
-    filtered_top_path = os.path.join(run_output_dir, FILTERED_TOP_FILENAME)
+    filtered_top_path = _temp_path(run_output_dir, FILTERED_TOP_FILENAME)
     filtered_top_map = {}
     if os.path.exists(filtered_top_path):
         with open(filtered_top_path, 'r', encoding='utf-8') as f:

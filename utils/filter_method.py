@@ -182,6 +182,39 @@ def merge_committee_advanced(result1, result2):
         'Filter Reasons': merged_filter_reasons
     }
     
+def filter_committee_by_advisor(applicant_name, committee_members, advisor_lookup, student_lookup):
+    """
+    過濾與申請人有師生關係的委員。
+    - 委員是申請人的指導教授 → 過濾
+    - 委員曾受申請人指導（申請人是委員的指導教授）→ 過濾
+
+    :param applicant_name: 申請人姓名
+    :param committee_members: 候選委員清單（含 委員名稱 欄位）
+    :param advisor_lookup: dict {人名 -> set(指導教授名稱)}（由外部預建）
+    :param student_lookup: dict {指導教授名稱 -> set(學生名稱)}（由外部預建）
+    """
+    filtered_members = set()
+    filter_reasons = {}
+
+    applicant_advisors = advisor_lookup.get(applicant_name, set())
+    applicant_students = student_lookup.get(applicant_name, set())
+
+    for member in committee_members:
+        name = member['委員名稱']
+        if name in applicant_advisors:
+            filtered_members.add(name)
+            filter_reasons[name] = f"委員 {name} 是申請人 {applicant_name} 的指導教授"
+        elif name in applicant_students:
+            filtered_members.add(name)
+            filter_reasons[name] = f"委員 {name} 曾受申請人 {applicant_name} 指導"
+
+    remaining_members = [m['委員名稱'] for m in committee_members if m['委員名稱'] not in filtered_members]
+    return {
+        'Filtered Members': list(filtered_members),
+        'Remaining Members': remaining_members,
+        'Filter Reasons': filter_reasons
+    }
+
 def extract_max_year(year):
     """將年份範圍轉換為最大值，例如 '113-114' -> 114"""
     if isinstance(year, str):  # 確保是字串

@@ -174,10 +174,10 @@ def main():
     # generate_by_file(pass_project_excel_file, years, pass_output_file)
 
     print('---start apply project abstract generation---')
-    apply_file_path = 'data/research_proj/115計算機學門審查/附件一_115技專預推名冊(E41)智慧計算.xlsx'
+    apply_file_path = 'data/research_proj/115計算機學門審查/瑞典/計畫書資料.xlsx'
     apply_project_excel_file = pd.ExcelFile(apply_file_path)
-    apply_years = ['預推名冊(E41智慧計算)']
-    apply_output_file = "data/research_proj/115計算機學門審查/apply_project_with_abstract(附件一_115技專預推名冊(E41)智慧計算).xlsx"
+    apply_years = ['計畫書資料']
+    apply_output_file = "data/research_proj/115計算機學門審查/瑞典/apply_project_with_abstract(計畫書資料).xlsx"
     generate_by_file(apply_project_excel_file, apply_years, apply_output_file)
 if __name__ == "__main__":
     main()

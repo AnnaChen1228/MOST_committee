@@ -1,0 +1,86 @@
+SOURCE:
+  field:
+    # 目前執行的計畫類型，擇一填入
+    目前執行計畫: 產學合作   # 產學合作 | 研究計畫
+
+    # 本次要審查的 Excel 內的分頁名稱（可多個）
+    計畫SHEET:
+    - 智慧計算
+
+    # ── 以下欄位名稱須與「申請名冊 Excel」的欄位標題完全一致 ──
+    申請機構欄位名稱: "單位名稱"           # 申請人所屬機構的欄位名稱
+    申請主持人欄位名稱: "計畫主持人"       # 主持人姓名的欄位名稱
+    申請共同主持人:                        # 共同主持人欄位名稱（可多個，無則留空 []）
+    - 共同主持人
+    申請共同機構欄位名稱: []               # 共同主持人所屬機構欄位名稱（可多個，無則留空 []）
+    計畫名稱: "計畫中文名稱"               # 計畫名稱的欄位名稱
+    中文關鍵字: "中文關鍵字"               # 關鍵字的欄位名稱
+    計劃摘要: "中文摘要"                   # 摘要的欄位名稱
+    職稱: "職稱"                           # 職稱的欄位名稱
+    計畫相關其他欄位:                      # 其他要保留在輸出表中的欄位（可多個）
+    - 單位編號
+    - 條碼編號
+
+  data:
+    退休或黑名單委員: retiree_blacklist.csv   # 不可擔任委員的名單，CSV 格式，需有「姓名」欄位
+
+    research_proj: # 研究計畫相關檔案
+      # ── 替換檔案（每次審查前更新這裡）──
+      研究計畫申請名冊: 115計算機學門審查\申請案件.xlsx   # 本次要審查的申請名冊
+
+      # ── 準備資料（歷史資料，通常不需要每次更新）──
+      計畫過去申請案件: 115計算機學門審查\108-115年申請案件.xlsx   # 歷史申請案件（含摘要與關鍵字）
+      統計清單: 115計算機學門審查\統計清單.xlsx                     # 歷史通過案件統計清單（可選填，沒有留空即可）
+      曾任委員: 前任委員名單.txt                                    # 曾擔任過委員的名單（txt，每行一個姓名）
+      計畫過去申請案件年分範圍: ["108", "109", "110", "111", "112", "113", "114"]
+
+    industry_coop: # 產學合作相關檔案
+      # ── 替換檔案（每次審查前更新這裡）──
+      產學合作申請名冊: 申請名冊.xlsx          # 本次要審查的產學合作申請名冊
+
+      # ── 準備資料 ──
+      產學過去申請名冊: 108-114核定計畫名單.xlsx   # 歷史產學合作通過案件
+
+    crawler: # 爬蟲相關檔案（通常不需要異動）
+      查找碩博士名單: NST.xlsx              # 要爬蟲的人才名單（計畫主持人 + 學校）
+      碩博士論文: NST_crawler.xlsx          # 爬蟲輸出（原始）
+      碩博士論文_RDF: NST_crawler_RDF.xlsx  # 標準化後的爬蟲結果（委員歷史就職學校來源）
+
+OUTPUT:
+  data:
+    output: # 每次執行輸出的檔案名稱（通常不需要異動）
+      統計表分析: 推薦表統合與分析.xlsx
+      過濾相近後統計表: 過濾相近後統計表.xlsx
+      FINAL_COMMITTEE: 申請名冊_推薦表統合_VBA.xlsx   # 最終輸出的推薦委員表
+      申請計畫拆解結果: 申請計畫拆解結果.xlsx
+
+    RDF_database: # 資料庫相關檔案（通常不需要異動）
+      BGE_INDUSTRY_MANAGER: manager_group_industry.json
+      BGE_MANAGER: manager_group.json
+      統計清單人才資料_RDF: 統計清單人才資料_RDF.xlsx
+      統計清單人才資料_RDF_UNI: 統計清單人才資料_RDF_UNI.xlsx
+      暫存最新人才資料庫: 暫存最新人才資料庫.xlsx
+      委員指導教授資料: committee_all_education_with_advisor.xlsx
+      # 執行 crawl_advisor.py 後會產生帶日期的新檔（如 committee_all_education_with_advisor_20260711.xlsx）
+      # 確認資料無誤後，手動將上方檔名改為對應日期版本即可套用新資料
+      # 欄位包含：名稱、現任學校、博士/碩士畢業學校系所、指導教授、畢業論文、爬取狀態
+
+    pass_data: # 向量資料庫索引用的過去通過案件
+      PASS_RESEARCH: 研究計畫過去通過案件.xlsx
+      PASS_INDUSTRY: 產學合作過去通過案件.xlsx
+
+DATABASE:
+  database: # 向量資料庫路徑（通常不需要異動）
+    CHROMA_BASIC: basic_research
+    CHROMA_ABSTRACT: abstract_research
+    CHROMA_BASIC_INDUSTRY: basic_industry
+    CHROMA_ABSTRACT_INDUSTRY: abstract_industry
+
+MODEL:
+  model:
+    # ── 以下資訊請向管理員取得，不可公開 ──
+    OLLAMA_HOST: <請填入 Ollama 伺服器位址，例如 http://host:port>
+    OLLAMA_USER: <帳號>
+    OLLAMA_PASSWORD: <密碼>
+    LLM_MODEL_NAME: <LLM 模型名稱，例如 gpt-oss:120b>
+    EMBEDDING_MODEL_NAME: BAAI/bge-large-zh-v1.5

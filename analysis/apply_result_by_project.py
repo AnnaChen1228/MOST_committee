@@ -49,7 +49,7 @@ def load_data(file_path, pages):
                 keywords = []
                 
             apply_dicts[title] = {
-                'manager': str(row.get('申請人', '')),
+                'manager': str(row.get('主持人', '')),
                 'title': title,
                 'keywords': keywords,
                 'abstract': row.get('中文摘要', ''),
@@ -88,8 +88,8 @@ def search(vectordb, query_text, RECOMMAND_AMOUNT=50): # 稍微抓多一點備�
         return []
 
 def main():
-    store_file_path = 'data/research_proj/115計算機學門審查/青穗學者/apply_project_with_abstract(青穗學者計畫new).xlsx'
-    years = ['推薦書審委員_115工程處智慧計算青穗申請案'] # 假設這是申請年度 
+    store_file_path = 'data/research_proj/115計算機學門審查/新興大專生計畫/115 新興 大專生計畫-智慧計算.xlsx'
+    years = ['工作表1'] # 假設這是申請年度 
     
     # 1. 載入申請資料
     apply_dicts = load_data(store_file_path, years)
@@ -107,13 +107,13 @@ def main():
         'methods_to_solve': path_abstract
     }
     
-    target_collections = ['title', 'keywords', 'application_directions', 'problems_to_solve', 'goals_to_achieve', 'methods_to_solve']
-    
+    # target_collections = ['title', 'keywords', 'application_directions', 'problems_to_solve', 'goals_to_achieve', 'methods_to_solve']
+    target_collections = ['title']  # 先測試這兩個欄位，之後再擴展到其他欄位
     print("正在連線至向量資料庫...")
     client_basic = chromadb.PersistentClient(path=path_basic)
     client_abstract = chromadb.PersistentClient(path=path_abstract)
     
-    output_file = 'data/research_proj/115計算機學門審查/青穗學者/result_score(青穗學者計畫new_by_project_research).xlsx'
+    output_file = 'data/research_proj/115計算機學門審查/新興大專生計畫/result_score(115 新興 大專生計畫-智慧計算_by_project_research).xlsx'
     if os.path.exists(output_file):
         try:
             os.remove(output_file)

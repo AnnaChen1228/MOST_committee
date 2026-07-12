@@ -2,10 +2,20 @@
 from tkinter import messagebox, ttk  # 新增 ttk 用來畫進度條
 import threading                     # 新增 threading 用於背景執行
 import os
+import shutil
 from datetime import datetime
 from utils.get_setting import value_of_key, set_run_output_dir
 from utils.script import load_into_chroma_bge_manager, update_peronsal_info_database, search_v3, filter_committee, excel_process_VBA, statistic_committee
 from utils.get_setting import setting_data
+
+def _cleanup_run_dir_on_error(run_dir):
+    """報錯時刪除本次輸出資料夾（含所有中間檔）。"""
+    if not run_dir or not os.path.exists(run_dir):
+        return
+    try:
+        shutil.rmtree(run_dir)
+    except Exception as e:
+        print(f"清理輸出資料夾失敗: {e}")
 
 def execute_mode(mode, current_plan, root_window):
     if current_plan == "產學合作":
@@ -62,12 +72,12 @@ def execute_mode(mode, current_plan, root_window):
 
     # ================= 4. 定義背景任務 =================
     def background_task():
+        run_dir = None  # 讓 except 也能存取，用於報錯時清理
         try:
             if mode == '存入資料庫':
-                # 【修改】把 update_progress 當作參數傳進去
                 load_into_chroma_bge_manager(is_industry, progress_callback=update_progress)
                 root_window.after(0, lambda: finish_task("success", "成功", "資料已成功存入資料庫"))
-                
+
             elif mode == '輸出推薦委員':
                 # 以「審查檔案名稱_時間」建立本次審查的專屬輸出資料夾
                 if is_industry:
@@ -79,14 +89,12 @@ def execute_mode(mode, current_plan, root_window):
                 run_dir = os.path.join("./data/output", f"{review_name}_{timestamp}")
                 set_run_output_dir(run_dir)
 
-                # 如果其他函式也有迴圈，也可以比照辦理傳入 progress_callback
                 update_peronsal_info_database(is_industry)
                 statistic_committee()
                 search_v3(is_industry, progress_callback=update_progress)
                 filter_committee(is_industry)
                 excel_process_VBA()
 
-                # 組出結果位置與名稱，顯示在跳出的視窗中（路徑從 output 起算，檔案只寫名稱）
                 final_file_name = value_of_key("FINAL_COMMITTEE")
                 run_dir_display = os.path.join("output", f"{review_name}_{timestamp}")
                 done_message = (
@@ -95,15 +103,17 @@ def execute_mode(mode, current_plan, root_window):
                     f"最終推薦結果檔案：\n{final_file_name}"
                 )
                 root_window.after(0, lambda: finish_task("success", "成功", done_message))
-                
+
         except RuntimeError as e:
+            _cleanup_run_dir_on_error(run_dir)
             error_msg = str(e)
             if error_msg == "server暫時無法使用":
                 root_window.after(0, lambda: finish_task("error", "伺服器錯誤", "Ollama 回應超時！"))
             else:
                 root_window.after(0, lambda: finish_task("error", "執行錯誤", error_msg))
-                
+
         except Exception as e:
+            _cleanup_run_dir_on_error(run_dir)
             error_str = str(e)
             root_window.after(0, lambda: finish_task("error", "未預期錯誤", f"發生錯誤：{error_str}"))
 

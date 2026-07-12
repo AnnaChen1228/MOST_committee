@@ -392,10 +392,10 @@ def main():
     current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
     print(f"🕒 本次執行時間戳記: {current_time}")
 
-    input_path = 'data/research_proj/115計算機學門審查/recommendation_results_filter(研究計畫).xlsx'
-    org_path = 'data/research_proj/115計算機學門審查/recommendation_results_org_colored(研究計畫).xlsx'
+    input_path = 'data/research_proj/115計算機學門審查/瑞典/recommendation_results_filter(計畫書資料).xlsx'
+    org_path = 'data/research_proj/115計算機學門審查/瑞典/recommendation_results_org_colored(計畫書資料).xlsx'
     # org_path = 'data/output/(勿對外公開資料或流傳)108-115年智慧計算學門大批專題計畫申請案件(含中英文摘要及關鍵字)_推薦表統合_VBA_filiter.xlsx'
-    item_data_file = 'data/research_proj/115計算機學門審查/result_score(研究計畫).xlsx'
+    item_data_file = 'data/research_proj/115計算機學門審查/瑞典/result_score(計畫書資料).xlsx'
     
     # 讀取資料
     print(f"📂 讀取新名單: {input_path}")

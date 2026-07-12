@@ -10,11 +10,15 @@ with open('./setting.yaml', 'r', encoding='utf-8') as file:
 #   設定後，下列「每次審查產出的結果/過程檔案」會改存到此資料夾，
 #   其餘（如人才資料庫等需跨次保留的檔案）維持原本位置。
 _RUN_OUTPUT_DIR = None
+# 最終輸出到審查資料夾根目錄（交接/查閱用）
 _RUN_OUTPUT_KEYS = {
-    "統計表分析",        # 推薦表統合與分析
-    "過濾相近後統計表",
-    "FINAL_COMMITTEE",   # 最終推薦表
+    "FINAL_COMMITTEE",
     "申請計畫拆解結果",
+}
+# 中間過程檔，存到 temp/ 子資料夾，不污染根目錄
+_TEMP_OUTPUT_KEYS = {
+    "統計表分析",
+    "過濾相近後統計表",
 }
 
 def set_run_output_dir(path):
@@ -47,9 +51,10 @@ def find_key_path_list(dictionary, target_key, path=''):
 def find_key_path(target_key):
     path_list = find_key_path_list(setting_data, target_key)
 
-    # 本次審查的結果/過程檔案 → 改存到本次審查專屬資料夾
     if _RUN_OUTPUT_DIR and target_key in _RUN_OUTPUT_KEYS and path_list:
         result_text = os.path.join(_RUN_OUTPUT_DIR, path_list[-1])
+    elif _RUN_OUTPUT_DIR and target_key in _TEMP_OUTPUT_KEYS and path_list:
+        result_text = os.path.join(_RUN_OUTPUT_DIR, "temp", path_list[-1])
     else:
         result_text = "."
         for node in path_list[1:]:

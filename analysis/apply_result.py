@@ -48,7 +48,7 @@ def load_data(file_path, pages):
             except:
                 keywords = []
             apply_dicts[title] = {
-                'manager': str(row['申請人']),
+                'manager': str(row['主持人']),
                 'title': title,
                 'keywords': keywords, # List
                 'abstract': row['中文摘要'],
@@ -89,16 +89,16 @@ def search(vectordb, query_text, RECOMMAND_AMOUNT=30):
         return []
 
 def main():
-    store_file_path = 'data/research_proj/115計算機學門審查/青穗學者/apply_project_with_abstract(青穗學者計畫new).xlsx'
-    years = ['推薦書審委員_115工程處智慧計算青穗申請案'] # 假設這是申請年度
+    store_file_path = 'data/research_proj/115計算機學門審查/瑞典/apply_project_with_abstract(計畫書資料).xlsx'
+    years = ['計畫書資料'] # 假設這是申請年度 
     # years = ['115-1電子資通領域(大產學)初審推薦名冊']
     # store_file_path = "data/industry_coop/apply_project_with_abstract(電子資通).xlsx"
     
     # 1. 載入申請資料
     apply_dicts = load_data(store_file_path, years)
     # # 2. 設定資料庫路徑與分類
-    path_basic = "database/vectorstore_basic_industry"
-    path_abstract = "database/vectorstore_abstract_industry"
+    path_basic = "database/vectorstore_basic"
+    path_abstract = "database/vectorstore_abstract"
     
     # 定義哪些欄位去哪個資料庫找
     collections_map = {
@@ -118,7 +118,7 @@ def main():
     client_abstract = chromadb.PersistentClient(path=path_abstract)
     
     # 確保輸出檔案路徑正確
-    output_file = 'data/research_proj/115計算機學門審查/青穗學者/result_score(青穗學者計畫new_industry).xlsx'
+    output_file = 'data/research_proj/115計算機學門審查/瑞典/result_score(計畫書資料_research).xlsx'
     if os.path.exists(output_file):
         try:
             os.remove(output_file)
