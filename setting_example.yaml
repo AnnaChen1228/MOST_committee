@@ -45,7 +45,11 @@ SOURCE:
       查找碩博士名單: NST.xlsx              # 要爬蟲的人才名單（計畫主持人 + 學校）
       碩博士論文: NST_crawler.xlsx          # 爬蟲輸出（原始）
       碩博士論文_RDF: NST_crawler_RDF.xlsx  # 標準化後的爬蟲結果（委員歷史就職學校來源）
-
+      委員指導教授資料: committee_all_education_with_advisor.xlsx
+      # 執行 crawl_advisor.py 後會產生帶日期的新檔（如 committee_all_education_with_advisor_20260711.xlsx）
+      # 確認資料無誤後，手動將上方檔名改為對應日期版本即可套用新資料
+      # 欄位包含：名稱、現任學校、博士/碩士畢業學校系所、指導教授、畢業論文、爬取狀態
+      
 OUTPUT:
   data:
     output: # 每次執行輸出的檔案名稱（通常不需要異動）
@@ -60,10 +64,7 @@ OUTPUT:
       統計清單人才資料_RDF: 統計清單人才資料_RDF.xlsx
       統計清單人才資料_RDF_UNI: 統計清單人才資料_RDF_UNI.xlsx
       暫存最新人才資料庫: 暫存最新人才資料庫.xlsx
-      委員指導教授資料: committee_all_education_with_advisor.xlsx
-      # 執行 crawl_advisor.py 後會產生帶日期的新檔（如 committee_all_education_with_advisor_20260711.xlsx）
-      # 確認資料無誤後，手動將上方檔名改為對應日期版本即可套用新資料
-      # 欄位包含：名稱、現任學校、博士/碩士畢業學校系所、指導教授、畢業論文、爬取狀態
+      
 
     pass_data: # 向量資料庫索引用的過去通過案件
       PASS_RESEARCH: 研究計畫過去通過案件.xlsx
