@@ -2,8 +2,24 @@ import pandas as pd
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 import os
+import argparse
 import chromadb
 import tqdm
+
+# 各計畫類型對應的向量資料庫路徑（研究計畫 / 產學合作）
+DB_PATHS = {
+    'research': {
+        'basic': 'database/vectorstore_basic_research_by_project',
+        'abstract': 'database/vectorstore_abstract_research_by_project',
+    },
+    'industry': {
+        'basic': 'database/vectorstore_basic_industry_by_project',
+        'abstract': 'database/vectorstore_abstract_industry_by_project',
+    },
+}
+
+# 一律比對全部欄位（名稱、關鍵字、摘要拆解出的四個欄位）
+ALL_FIELDS = ['title', 'keywords', 'application_directions', 'problems_to_solve', 'goals_to_achieve', 'methods_to_solve']
 
 # --- 1. 設定模型 ---
 model_name = 'BAAI/bge-large-zh-v1.5'
@@ -88,16 +104,31 @@ def search(vectordb, query_text, RECOMMAND_AMOUNT=50): # 稍微抓多一點備�
         return []
 
 def main():
-    store_file_path = 'data/research_proj/115計算機學門審查/新興大專生計畫/115 新興 大專生計畫-智慧計算.xlsx'
-    years = ['工作表1'] # 假設這是申請年度 
-    
+    parser = argparse.ArgumentParser(description='比對當次申請案件與向量資料庫中的過往通過案件，計算相似度分數（以專案為單位）')
+    parser.add_argument('--input', default='data/research_proj/115計算機學門審查/新興大專生計畫/115 新興 大專生計畫-智慧計算.xlsx',
+                        help='當次申請案件的 Excel 檔')
+    parser.add_argument('--sheets', nargs='+', default=['工作表1'],
+                        help='申請案件要讀取的工作表(sheet)名稱')
+    parser.add_argument('--type', choices=['research', 'industry'], default='research',
+                        help='計畫類型，決定向量資料庫預設路徑（research=研究計畫, industry=產學合作）')
+    parser.add_argument('--basic-db', default=None,
+                        help='Title / Keywords 向量資料庫路徑（未指定時依 --type 自動決定，需與 store 步驟一致）')
+    parser.add_argument('--abstract-db', default=None,
+                        help='摘要四欄位向量資料庫路徑（未指定時依 --type 自動決定，需與 store 步驟一致）')
+    parser.add_argument('--output', default='data/research_proj/115計算機學門審查/新興大專生計畫/result_score(115 新興 大專生計畫-智慧計算_by_project_research).xlsx',
+                        help='相似度分數輸出的 Excel 檔')
+    args = parser.parse_args()
+
+    store_file_path = args.input
+    years = args.sheets
+
     # 1. 載入申請資料
     apply_dicts = load_data(store_file_path, years)
     print(len(apply_dicts))
-    # 2. 設定資料庫路徑與分類
-    path_basic = "database/vectorstore_basic_research_by_project"
-    path_abstract = "database/vectorstore_abstract_research_by_project"
-    
+    # 2. 設定資料庫路徑與分類（未指定則依 --type 帶出預設）
+    path_basic = args.basic_db or DB_PATHS[args.type]['basic']
+    path_abstract = args.abstract_db or DB_PATHS[args.type]['abstract']
+
     collections_map = {
         'title': path_basic,
         'keywords': path_basic,
@@ -106,14 +137,14 @@ def main():
         'goals_to_achieve': path_abstract,
         'methods_to_solve': path_abstract
     }
-    
-    # target_collections = ['title', 'keywords', 'application_directions', 'problems_to_solve', 'goals_to_achieve', 'methods_to_solve']
-    target_collections = ['title']  # 先測試這兩個欄位，之後再擴展到其他欄位
+
+    # 一律比對全部欄位
+    target_collections = ALL_FIELDS
     print("正在連線至向量資料庫...")
     client_basic = chromadb.PersistentClient(path=path_basic)
     client_abstract = chromadb.PersistentClient(path=path_abstract)
-    
-    output_file = 'data/research_proj/115計算機學門審查/新興大專生計畫/result_score(115 新興 大專生計畫-智慧計算_by_project_research).xlsx'
+
+    output_file = args.output
     if os.path.exists(output_file):
         try:
             os.remove(output_file)

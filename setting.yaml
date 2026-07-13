@@ -1,18 +1,19 @@
 SOURCE:
   field:
-    目前執行計畫: 研究計畫 # 產學合作 | 研究計畫
+    目前執行計畫: 產學合作 # 產學合作 | 研究計畫
     計畫SHEET:
-    - '115'
-    申請機構欄位名稱: "機關名稱"
-    申請主持人欄位名稱: "計畫主持人"
-    申請共同主持人: []
-    申請共同機構欄位名稱:
+    - 智慧計算
+    申請機構欄位名稱: "申請機構"
+    申請主持人欄位名稱: "主持人"
+    申請共同主持人:
     - 共同主持人
-    計畫名稱: "計畫中文名稱"
+    申請共同機構欄位名稱: []
+    計畫名稱: "計畫名稱"
     中文關鍵字: "中文關鍵字"
     計劃摘要: "中文摘要"
-    職稱: "職稱"
-    計畫相關其他欄位: []
+    職稱: "現職"
+    計畫相關其他欄位:
+    - 單位編號
   data:
     退休或黑名單委員: retiree_blacklist.csv
 
@@ -31,19 +32,21 @@ SOURCE:
       產學合作申請名冊: 1140214_小產學初審推薦表_E41.xlsx # 主要用於取得計畫名稱與關鍵字
 
       # 以下是準備資料
-      產學過去申請名冊: 108-112產學計畫E41申請名冊.xlsx
+      產學過去申請名冊: 108-114核定計畫名單(含關鍵字與摘要)20260223_產學計畫案.xlsx
 
     crawler: # 爬蟲資料
       查找碩博士名單: NST.xlsx # 要爬蟲的人才名單(計畫主持人, 學校)
       碩博士論文: NST_crawler.xlsx # 爬蟲輸出
       碩博士論文_RDF: NST_crawler_RDF.xlsx # 標準化後的輸出 #= 委員們過去就職過的學校
-
+      委員指導教授資料: committee_all_education_with_advisor.xlsx  # 爬蟲產出（畢業學校 + 指導教授）
+      
 OUTPUT:
   data:
     output: # 輸出的檔案
       統計表分析: 推薦表統合與分析.xlsx
       過濾相近後統計表: 過濾相近後統計表.xlsx
-      FINAL_COMMITTEE: (勿對外公開資料或流傳)108-115年智慧計算學門大批專題計畫申請案件(含中英文摘要及關鍵字)_推薦表統合_VBA.xlsx
+      FINAL_COMMITTEE: 1140214_小產學初審推薦表_E41_推薦表統合_VBA.xlsx
+      申請計畫拆解結果: 申請計畫拆解結果.xlsx
 
     RDF_database:
       BGE_INDUSTRY_MANAGER: manager_group_industry.json
@@ -51,8 +54,23 @@ OUTPUT:
       統計清單人才資料_RDF: 統計清單人才資料_RDF.xlsx
       統計清單人才資料_RDF_UNI: 統計清單人才資料_RDF_UNI.xlsx
       暫存最新人才資料庫: 暫存最新人才資料庫.xlsx
+      
+    pass_data:
+      PASS_RESEARCH: 研究計畫過去通過案件.xlsx
+      PASS_INDUSTRY: 產學合作過去通過案件.xlsx
 
 DATABASE:
   database: # 資料庫
-    CHROMA: chroma_database
-    CHROMA_INDUSTRY: chroma_database_industry
+    CHROMA_BASIC: basic_research
+    CHROMA_ABSTRACT: abstract_research
+    CHROMA_BASIC_INDUSTRY: basic_industry
+    CHROMA_ABSTRACT_INDUSTRY: abstract_industry
+
+MODEL:
+  model:
+    OLLAMA_HOST: http://ncu_student:widmwidm@140.115.54.62:11434
+    # OLLAMA_HOST: localhost:1228
+    OLLAMA_USER: ncu_student
+    OLLAMA_PASSWORD: widmwidm
+    LLM_MODEL_NAME: gpt-oss:120b
+    EMBEDDING_MODEL_NAME: BAAI/bge-large-zh-v1.5

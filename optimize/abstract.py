@@ -2,6 +2,7 @@ import ollama
 import pandas as pd
 import json
 import time
+import argparse
 from datetime import datetime, timedelta
 from tqdm.auto import tqdm
 import os
@@ -62,7 +63,7 @@ def local_generate(model,systemPrompt,userPrompt,schema):
     )
     return response
 
-def generate_by_file(file,years,output_file):
+def generate_by_file(file,years,output_file,model='gpt-oss:120b'):
     if not os.path.exists(output_file):
         print(f"創建新的輸出文件: {output_file}")
         # 創建一個空白的 Excel 文件
@@ -103,7 +104,7 @@ def generate_by_file(file,years,output_file):
                 if not abstract:
                     continue
                 # 使用 LLM 生成結果
-                llama_response = local_generate('gpt-oss:120b', prompt, abstract, schema)
+                llama_response = local_generate(model, prompt, abstract, schema)
                 raw_data = json.loads(llama_response.message.content)
                 
                 # 將 LLM 結果添加到項目字典中
@@ -166,19 +167,27 @@ def generate_by_file(file,years,output_file):
     print(f"\n全部處理完成，總耗時: {total_time_str}")
 
 def main():
-    # print('---start pass project abstract generation---')
-    # path_file_path = 'data/industry_coop/108-114核定計畫名單(含關鍵字與摘要)20260223_產學計畫案.xlsx'
-    # pass_project_excel_file = pd.ExcelFile(path_file_path)
-    # years = ['108-114']
-    # pass_output_file = "data/industry_coop/pass_project_with_abstract_108-114.xlsx"
-    # generate_by_file(pass_project_excel_file, years, pass_output_file)
+    global ollama_client
+
+    parser = argparse.ArgumentParser(description='用 local LLM 將計畫摘要拆解成 應用方向/欲解決問題/達成目標/解決方法 四個欄位')
+    parser.add_argument('--input', default='data/research_proj/115計算機學門審查/瑞典/計畫書資料.xlsx',
+                        help='要拆解摘要的 Excel 檔（申請案件或過往通過案件）')
+    parser.add_argument('--sheets', nargs='+', default=['計畫書資料'],
+                        help='要處理的工作表(sheet)名稱，可一次給多個，例如 --sheets 108 109 110')
+    parser.add_argument('--output', default='data/research_proj/115計算機學門審查/瑞典/apply_project_with_abstract(計畫書資料).xlsx',
+                        help='拆解結果輸出的 Excel 檔')
+    parser.add_argument('--ollama-host', default='http://localhost:1228',
+                        help='Ollama 服務位址')
+    parser.add_argument('--model', default='gpt-oss:120b',
+                        help='使用的 local LLM 模型名稱')
+    args = parser.parse_args()
+
+    ollama_client = ollama.Client(host=args.ollama_host)
 
     print('---start apply project abstract generation---')
-    apply_file_path = 'data/research_proj/115計算機學門審查/瑞典/計畫書資料.xlsx'
-    apply_project_excel_file = pd.ExcelFile(apply_file_path)
-    apply_years = ['計畫書資料']
-    apply_output_file = "data/research_proj/115計算機學門審查/瑞典/apply_project_with_abstract(計畫書資料).xlsx"
-    generate_by_file(apply_project_excel_file, apply_years, apply_output_file)
+    apply_project_excel_file = pd.ExcelFile(args.input)
+    generate_by_file(apply_project_excel_file, args.sheets, args.output, args.model)
+
 if __name__ == "__main__":
     main()
 

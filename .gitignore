@@ -12,3 +12,5 @@ libs/*
 share/man/man1/isympy.1
 Include/greenlet/greenlet.h
 database/
+
+setting.yaml

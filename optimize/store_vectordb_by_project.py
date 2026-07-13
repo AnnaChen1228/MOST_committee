@@ -4,7 +4,20 @@ from langchain_community.vectorstores import Chroma
 from langchain_core.documents import Document
 import os
 import shutil
+import argparse
 import tqdm
+
+# 各計畫類型對應的向量資料庫路徑（研究計畫 / 產學合作）
+DB_PATHS = {
+    'research': {
+        'basic': 'database/vectorstore_basic_research_by_project',
+        'abstract': 'database/vectorstore_abstract_research_by_project',
+    },
+    'industry': {
+        'basic': 'database/vectorstore_basic_industry_by_project',
+        'abstract': 'database/vectorstore_abstract_industry_by_project',
+    },
+}
 
 # --- 1. 設定 Embedding 模型 ---
 model_name = 'BAAI/bge-large-zh-v1.5'
@@ -192,29 +205,28 @@ def store_abstract_db(chroma_db_path, projects_dict, embedding_model):
             print(f"  ❌ {col_name} 儲存失敗: {e}")
 
 def main():
-    # industry_store_file_path = 'data/industry_coop/pass_project_with_abstract_108-114.xlsx'
-    research_store_file_path = 'data/research_proj/115計算機學門審查/pass_project_with_abstract.xlsx'
-    # if not os.path.exists(industry_store_file_path):
-    #     print(f"找不到檔案: {industry_store_file_path}")
-        # return
-    # if not os.path.exists(research_store_file_path):
-    #     print(f"找不到檔案: {research_store_file_path}")
-    #     return
-    # industry_years = ['108-114']
-    research_years = ['108','109','110','111','112','113','114']
+    parser = argparse.ArgumentParser(description='將過往通過案件（含摘要拆解結果）以「專案」為單位存入向量資料庫')
+    parser.add_argument('--input', default='data/research_proj/115計算機學門審查/pass_project_with_abstract.xlsx',
+                        help='過往通過案件（已含摘要拆解結果）的 Excel 檔')
+    parser.add_argument('--sheets', nargs='+', default=['108', '109', '110', '111', '112', '113', '114'],
+                        help='要讀取的工作表(sheet)名稱，通常是年度，例如 --sheets 108 109 110')
+    parser.add_argument('--type', choices=['research', 'industry'], default='research',
+                        help='計畫類型，決定向量資料庫預設路徑（research=研究計畫, industry=產學合作）')
+    parser.add_argument('--basic-db', default=None,
+                        help='存 Title / Keywords 的向量資料庫路徑（未指定時依 --type 自動決定）')
+    parser.add_argument('--abstract-db', default=None,
+                        help='存摘要四欄位（長文本）的向量資料庫路徑（未指定時依 --type 自動決定）')
+    args = parser.parse_args()
+
+    research_store_file_path = args.input
+    research_years = args.sheets
     # 1. 讀取資料
-    # industry_projects_dict = load_data(industry_store_file_path, industry_years)
     research_projects_dict = load_data(research_store_file_path, research_years)
 
-    # all_authors_dict = industry_authors_dict.copy()
-    # all_authors_dict.update(research_authors_dict)
+    # 2. 定義兩個不同的資料庫路徑（未指定則依 --type 帶出預設）
+    path_basic = args.basic_db or DB_PATHS[args.type]['basic']        # 存 Title, Keywords
+    path_abstract = args.abstract_db or DB_PATHS[args.type]['abstract']  # 存 Abstracts
 
-    # all_projects_dict = industry_projects_dict.copy()
-    # all_projects_dict.update(research_projects_dict)
-    # # 2. 定義兩個不同的資料庫路徑
-    path_basic = "database/vectorstore_basic_industry_by_project"       # 存 Title, Keywords
-    path_abstract = "database/vectorstore_abstract_industry_by_project" # 存 Abstracts
-    
     basic_info_dict = {}
     for title, data in research_projects_dict.items():
         basic_info_dict[title] = {

@@ -1,9 +1,13 @@
 import pandas as pd
 import os
 import re
+import argparse
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill
-from save_commitee_data import filiter_school 
+from save_commitee_data import filiter_school
+
+# 一律納入全部欄位計分（名稱、關鍵字、摘要拆解出的四個欄位），需與 apply_result_by_project.py 一致
+ALL_FIELDS = ['title', 'keywords', 'application_directions', 'problems_to_solve', 'goals_to_achieve', 'methods_to_solve']
 
 # --- 1. 利益迴避核心判定模組 ---
 def check_conflict_status(cand_name, cand_school, apply_advisors, app_info, all_applicants_set, blacklist):
@@ -210,21 +214,40 @@ def check_path(path):
 
 # --- 5. 主程式 ---
 def main():
-    apply_path = 'data/research_proj/115計算機學門審查/新興大專生計畫/115 新興 大專生計畫-智慧計算.xlsx'
+    parser = argparse.ArgumentParser(description='根據相似度分數輸出推薦委員，並做利益迴避過濾（去掉共同研究人員、同校、指導教授等）')
+    parser.add_argument('--apply', default='data/research_proj/115計算機學門審查/新興大專生計畫/115 新興 大專生計畫-智慧計算.xlsx',
+                        help='當次申請案件的 Excel 檔（用來取得申請人/共同主持人/機構做利益迴避）')
+    parser.add_argument('--sheet', default='工作表1',
+                        help='申請案件要讀取的工作表(sheet)名稱')
+    parser.add_argument('--score', default='data/research_proj/115計算機學門審查/新興大專生計畫/result_score(115 新興 大專生計畫-智慧計算_by_project_research).xlsx',
+                        help='apply_result_by_project.py 產出的相似度分數 Excel 檔')
+    parser.add_argument('--committee', default='data/RDF_database/committee_all_education_with_advisor.xlsx',
+                        help='委員畢業學校＋博士指導教授資料（爬蟲產出）')
+    parser.add_argument('--blacklist', default='data/retiree_blacklist.csv',
+                        help='退休或黑名單委員名單 csv')
+    parser.add_argument('--type', choices=['research', 'industry'], default='industry',
+                        help='計畫類型：industry(產學合作)會把本次申請者也列入利益迴避；research(研究計畫)則不會')
+    parser.add_argument('--org-output', default='data/research_proj/115計算機學門審查/新興大專生計畫/recommendation_results_org_colored(115 新興 大專生計畫-智慧計算_by_project_research).xlsx',
+                        help='未過濾、含上色標記的推薦結果輸出檔')
+    parser.add_argument('--filter-output', default='data/research_proj/115計算機學門審查/新興大專生計畫/recommendation_results_filter(115 新興 大專生計畫-智慧計算_by_project_research).xlsx',
+                        help='已做利益迴避過濾後的乾淨推薦結果輸出檔')
+    args = parser.parse_args()
+
+    apply_path = args.apply
     check_path(apply_path)
-    input_score_file = 'data/research_proj/115計算機學門審查/新興大專生計畫/result_score(115 新興 大專生計畫-智慧計算_by_project_research).xlsx'
+    input_score_file = args.score
     check_path(input_score_file)
-    committee_uni_file = 'data/RDF_database/committee_all_education_with_advisor.xlsx'
+    committee_uni_file = args.committee
     check_path(committee_uni_file)
-    blacklist_path = 'data/retiree_blacklist.csv'
+    blacklist_path = args.blacklist
     check_path(blacklist_path)
-    
-    industry = True 
-    apply_data = load_apply_data(apply_path, ['工作表1'])
+
+    industry = (args.type == 'industry')
+    apply_data = load_apply_data(apply_path, [args.sheet])
     all_applicants_set = set(info['manager'] for info in apply_data.values() if info['manager']) if industry else set()
-    
-    # pages = ['title', 'keywords', 'application_directions', 'problems_to_solve', 'goals_to_achieve', 'methods_to_solve']
-    pages = ['title']
+
+    # 一律納入全部欄位計分
+    pages = ALL_FIELDS
     result = calculate_score(group_by_project_dict(load_score_data(input_score_file, pages), pages))
     for proj, info in result.items():
         app = apply_data.get(proj, {'no':'', 'managerSchool': '', 'coManger': [], 'coSchool': []})
@@ -246,7 +269,7 @@ def main():
                 
     blacklist = pd.read_csv(blacklist_path)['姓名'].astype(str).tolist() if os.path.exists(blacklist_path) else []
 
-    save_results_with_highlight(result, 'data/research_proj/115計算機學門審查/新興大專生計畫/recommendation_results_org_colored(115 新興 大專生計畫-智慧計算_by_project_research).xlsx', reviewer_school_map, reviewer_advisor_map, blacklist, all_applicants_set)
+    save_results_with_highlight(result, args.org_output, reviewer_school_map, reviewer_advisor_map, blacklist, all_applicants_set)
     
     for proj, info in result.items():
         filtered, reasons = [], []
@@ -266,7 +289,7 @@ def main():
         info['final_candidates'] = filtered
         info['filter_reason_str'] = "[" + ";".join(reasons) + ";]" if reasons else "[]"
         
-    save_results_clean(result, 'data/research_proj/115計算機學門審查/新興大專生計畫/recommendation_results_filter(115 新興 大專生計畫-智慧計算_by_project_research).xlsx')
+    save_results_clean(result, args.filter_output)
 
 if __name__ == "__main__":
     main()

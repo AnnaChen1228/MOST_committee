@@ -68,8 +68,8 @@ def main():
         df_result = pd.DataFrame(result_data)
         df_result = df_result.sort_values(by=['名字', '年份'])
         # 3. 指定輸出檔名
-        output_filename = './data/RDF_database/commitee_all.xlsx'
-        uni_output_filename = './data/RDF_database/commitee_uni_all.xlsx'
+        output_filename = './data/crawler/commitee_all.xlsx'
+        uni_output_filename = './data/crawler/commitee_uni_all.xlsx'
         # 4. 存成 Excel (index=False 代表不存入最左邊的 0,1,2... 索引編號)
         df_result.to_excel(output_filename, index=False)
         df_latest = df_result.sort_values(by=['名字', '年份'], ascending=[True, False])
