@@ -157,3 +157,5 @@ matplotlib
 jieba
 seaborn
 ollama
+selenium
+beautifulsoup4

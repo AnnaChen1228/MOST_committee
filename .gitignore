@@ -1,6 +1,7 @@
 data
 chroma-viewer
 setting.yaml
+venv
 
 __pycache__
 .DS_Store

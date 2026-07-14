@@ -10,8 +10,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-FILE_PATH = './data/RDF_database/committee_all_education.xlsx'
-OUTPUT_PATH = './data/RDF_database/committee_all_education_with_advisor.xlsx'
+FILE_PATH = '../data/RDF_database/committee_all_education.xlsx'
+OUTPUT_PATH = '../data/RDF_database/committee_all_education_with_advisor.xlsx'
 
 def load_excel(path, pages):
     data = {}
