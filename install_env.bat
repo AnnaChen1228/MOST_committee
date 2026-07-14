@@ -8,8 +8,10 @@ REM 切換到批次檔所在目錄
 cd /d "%~dp0"
 
 REM 確保當前目錄有 python.exe
-if not exist "python.exe" (
-    echo [錯誤] 找不到 python.exe，請確保此批次檔放置於正確目錄。
+where python >nul 2>nul
+if %errorlevel% neq 0 (
+    echo [錯誤] 找不到 Python，請先安裝 Python 並確保已勾選 "Add to PATH"。
+    echo 下載連結：https://www.python.org/downloads/
     pause
     exit /b 1
 )
@@ -23,7 +25,7 @@ if not exist "requirements.txt" (
 
 REM 創建虛擬環境
 echo 正在創建虛擬環境 "%VENV_NAME%"...
-.\python.exe -m venv %VENV_NAME%
+python -m venv %VENV_NAME%
 if %errorlevel% neq 0 (
     echo [錯誤] 無法創建虛擬環境。
     pause

@@ -3,8 +3,8 @@
 2. run crawler.pt to spider the data.
 3. run main.py to committee
 
-+ Documentation: [Slides](https://docs.google.com/presentation/d/1CEhxtZ017oe7CfgC6S8-L7yWSMi0eQIIFs5ens1QY4I/edit?usp=sharing)
-+ `git clone https://github.com/Chrouos/MOST_committee.git`
++ Documentation: [Slides](https://docs.google.com/presentation/d/1uXlXFlKvbrHucoOPcy3qEWMRRdjj_5J9/edit?usp=sharing&ouid=111949423390848019828&rtpof=true&sd=true)
++ `git clone https://github.com/AnnaChen1228/MOST_committee.git`
 
 # Main
 
