@@ -110,10 +110,11 @@ def load_into_chroma_bge_manager(is_industry=False, progress_callback=None):
             if not is_industry and approved != 'true':  
                 continue
             
-            # 跳過黑名單
-            if manager in blacklist:
-                continue
-            
+            # 黑名單/已退休委員不在建庫階段排除，改由 filter_committee 標記過濾
+            # （這樣他們會照樣出現在推薦名單、被標色，並於「_過濾後」分頁移除）
+            # if manager in blacklist:
+            #     continue
+
             # 呼叫 LLM 進行摘要拆解
             parsed_abstract = {}
             if abstract and abstract.lower() != 'nan':
@@ -646,14 +647,24 @@ def filter_committee(is_industry=False):
         print(f"警告: 找不到委員指導教授資料檔案 {advisor_data_path}，將跳過師生關係過濾。")
 
     #: 載入 search_v3 產出的較深候選池（供過濾後遞補）
+    # 注意：search_v3 是寫到 temp/ 子目錄（_temp_path），此處必須一致，否則讀不到候選池、
+    # 導致委員清單全空、所有利益迴避（同校/指導教授等）完全失效
     run_output_dir = get_run_output_dir() or "./data/output"
-    rec_pool_path = os.path.join(run_output_dir, REC_POOL_FILENAME)
+    rec_pool_path = _temp_path(run_output_dir, REC_POOL_FILENAME)
     recommend_pool_map = {}
     if os.path.exists(rec_pool_path):
         with open(rec_pool_path, 'r', encoding='utf-8') as f:
             recommend_pool_map = json.load(f)
     BACKFILL_TARGET = 10  # 過濾後每案要補到的合格委員人數
     filtered_top_map = {}  # key = (分頁, 申請計畫) -> [{manager, score}, ...]（已遞補、最多 BACKFILL_TARGET 位）
+
+    #: 載入黑名單/已退休委員（改為「照樣推薦→標色→過濾後移除」，不再於建庫階段直接排除）
+    blacklist_set = set()
+    blacklist_csv_path = find_key_path("退休或黑名單委員")
+    if blacklist_csv_path and os.path.exists(blacklist_csv_path):
+        blacklist_set = set(
+            str(x).strip() for x in pd.read_csv(blacklist_csv_path, encoding='utf-8')['姓名'].dropna().tolist()
+        )
 
     #- Strategy
     writer = pd.ExcelWriter(find_key_path("過濾相近後統計表"), engine='openpyxl')
@@ -709,8 +720,22 @@ def filter_committee(is_industry=False):
                 'Remaining Members': [],
                 'Filter Reasons': {}
             }
-            
-            for sheet in apply_list_file.sheet_names: 
+
+            #~ 黑名單/已退休委員：一樣列入被篩掉名單（會被標色、於過濾後分頁移除）
+            if blacklist_set:
+                blacklist_result = {'Filtered Members': [], 'Remaining Members': [], 'Filter Reasons': {}}
+                for member in committee_person_dict:
+                    name = member['委員名稱']
+                    if name in blacklist_set:
+                        blacklist_result['Filtered Members'].append(name)
+                        blacklist_result['Filter Reasons'][name] = f"委員 {name} 為黑名單或已退休委員"
+                    else:
+                        blacklist_result['Remaining Members'].append(name)
+                total_committee_person_dict_result = merge_committee_advanced(
+                    total_committee_person_dict_result, blacklist_result
+                )
+
+            for sheet in apply_list_file.sheet_names:
                 current_sheet_apply_excel_data = pd.read_excel(apply_list_file, sheet_name=sheet)
                 find_temp_df = current_sheet_apply_excel_data[
                     current_sheet_apply_excel_data[value_of_key("計畫名稱")] == statistical_row[value_of_key("計畫名稱")]
@@ -738,7 +763,11 @@ def filter_committee(is_industry=False):
                     #~ 審查委員不能與計劃申請學校(包含共同主持人)有關
                     # print("apply_school\n", apply_school)
                     # print("committee_person_dict\n", committee_person_dict)
-                    filter_pairs = [("計畫申請學校", "委員曾就職學校"), ("共同計畫主持的學校", "委員曾就職學校")]
+                    filter_pairs = [
+                        ("計畫申請學校", "委員曾就職學校"), ("共同計畫主持的學校", "委員曾就職學校"),
+                        # 畢業同校（校友）也要迴避；學校名已用 split_institution 正規化到校級，同校不同系一樣過濾
+                        ("計畫申請學校", "委員過去畢業學校"), ("共同計畫主持的學校", "委員過去畢業學校"),
+                    ]
                     TITLE_RESTRICTIONS = {
                         "助理教授": ["教授", "研究員"], # 助理教授不能審教授或研究員
                         "助研究員": ["教授", "研究員"] # 助研究員不能審教授或研究員
@@ -876,7 +905,11 @@ def filter_committee_remove(is_industry=False):
                     }
 
                     # 執行進階過濾
-                    filter_pairs = [("計畫申請學校", "委員曾就職學校"), ("共同計畫主持的學校", "委員曾就職學校")]
+                    filter_pairs = [
+                        ("計畫申請學校", "委員曾就職學校"), ("共同計畫主持的學校", "委員曾就職學校"),
+                        # 畢業同校（校友）也要迴避；學校名已用 split_institution 正規化到校級，同校不同系一樣過濾
+                        ("計畫申請學校", "委員過去畢業學校"), ("共同計畫主持的學校", "委員過去畢業學校"),
+                    ]
                     TITLE_RESTRICTIONS = {"助理教授": ["教授", "研究員"], "助研究員": ["教授", "研究員"]}
                     
                     current_res = filter_committee_advanced(
@@ -970,6 +1003,10 @@ def add_comments(target_ws, data_ws, columns_to_comment, project_map=None, map_s
     target_headers = [cell.value for cell in target_ws[1]]
     proj_col_idx = target_headers.index(project_name_field) + 1 if project_name_field in target_headers else None
 
+    # 找出「篩選原因」欄位位置（內容為 {委員: 過濾原因} 的字典），
+    # 用來把過濾原因寫在註解第一行，免得要拉到最後一欄才看得到
+    reason_col_idx = target_headers.index("篩選原因") + 1 if "篩選原因" in target_headers else None
+
     # 在每個指定欄位添加註釋
     for col in columns_to_comment:
         for cell in target_ws[col]:
@@ -977,6 +1014,23 @@ def add_comments(target_ws, data_ws, columns_to_comment, project_map=None, map_s
                 continue
 
             comment_parts = []
+
+            # 若此委員有被過濾，於註解第一行標示過濾原因（原本最後一欄的「篩選原因」仍保留）
+            if reason_col_idx:
+                reason_raw = target_ws.cell(row=cell.row, column=reason_col_idx).value
+                reason_map = {}
+                if isinstance(reason_raw, dict):
+                    reason_map = reason_raw
+                elif isinstance(reason_raw, str) and reason_raw.strip():
+                    try:
+                        reason_map = ast.literal_eval(reason_raw)
+                    except (ValueError, SyntaxError):
+                        reason_map = {}
+                if isinstance(reason_map, dict):
+                    reason = reason_map.get(cell.value)
+                    if reason:
+                        comment_parts.append(f"過濾原因: {reason}")
+
             if cell.value in name_to_details:
                 comment_parts.append(name_to_details[cell.value])
 
@@ -1059,15 +1113,25 @@ def excel_process_VBA():
             apply_project = row[proj_col_idx - 1].value if proj_col_idx else None
             backfilled = filtered_top_map.get(_make_pool_key(committee_sheet.title, apply_project), [])
 
+            # 這一案的被篩掉名單；[] 代表沒有任何委員需要過濾
+            try:
+                filter_list = ast.literal_eval(row[-2].value)
+            except (ValueError, SyntaxError, TypeError):
+                filter_list = []
+
+            # 沒有需要過濾掉的委員 → 保留原本的推薦名單，不要用（可能為空的）候選池覆寫而清空
+            keep_original = not filter_list
+
             for k, (m_letter, s_letter) in enumerate(zip(manager_cols, score_cols)):
                 m_idx = column_index_from_string(m_letter) - 1
                 s_idx = column_index_from_string(s_letter) - 1
-                if k < len(backfilled):
-                    row[m_idx].value = backfilled[k]['manager']
-                    row[s_idx].value = backfilled[k]['score']
-                else:
-                    row[m_idx].value = None
-                    row[s_idx].value = None
+                if not keep_original:
+                    if k < len(backfilled):
+                        row[m_idx].value = backfilled[k]['manager']
+                        row[s_idx].value = backfilled[k]['score']
+                    else:
+                        row[m_idx].value = None
+                        row[s_idx].value = None
                 row[m_idx].fill = no_fill       # 清掉由原分頁複製來的粉紅標記
                 row[m_idx].comment = None       # 清掉複製來的舊註解，稍後重新加上
 

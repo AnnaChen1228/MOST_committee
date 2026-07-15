@@ -52,8 +52,12 @@ def find_crawler_person_relative_school(person, crawler_RDF_data):
     else:
         result_list = []
         for department in person_data['畢業學校']:
-            result_list.append(department.split("／")[0])
-            
+            # 先去掉 ／ 之後的系所，再用 split_institution 去掉「學院/系所」殘留，
+            # 統一到「學校」層級，才能比對到「同校不同系」的情況
+            school = split_institution(str(department).split("／")[0])[0]
+            if school:
+                result_list.append(school)
+
         return list(set(result_list))
 
 # 取得 dict 所有的 value (unique)
