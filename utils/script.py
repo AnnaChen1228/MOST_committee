@@ -299,8 +299,10 @@ def search_v3(is_industry=False, progress_callback=None):
         # ── Phase 2：向量相似度比對（每個 DB config 各跑一輪）──
         for cfg in search_configs:
             db_label = cfg['label']
+            # 研究計畫模式 label 為 None（讓分頁名維持不加後綴），顯示時改用可讀名稱避免介面出現 None
+            display_label = db_label or '研究計畫'
             if progress_callback:
-                progress_callback(0, 0, f"進行{db_label}資料庫的相似度比對...")
+                progress_callback(0, 0, f"進行{display_label}資料庫的相似度比對...")
             embedding_fn = get_embeddings_zh()
             vectorstores = {}
             for col in ['title', 'keywords']:
@@ -803,8 +805,21 @@ def filter_committee(is_industry=False):
             #     statistical_row[f"選取委員{index+1}"] = name
             
             #- Reason
-            statistical_row["篩掉人員"] = total_committee_person_dict_result["Filtered Members"]
-            statistical_row["篩選原因"] = total_committee_person_dict_result["Filter Reasons"]
+            # 「篩掉人員/篩選原因」只保留有顯示在推薦欄位（推薦委員 1..N）的委員，
+            # 候選池中排名 10 名以外、雖被過濾但沒推薦到的人不列出，避免混淆。
+            # 注意：遞補用的 filtered_out 仍需用「完整」被篩名單，不能一起砍。
+            displayed_recommended = {
+                str(v).strip()
+                for k, v in statistical_row.items()
+                if str(k).startswith("推薦委員") and pd.notna(v) and str(v).strip()
+            }
+            statistical_row["篩掉人員"] = [
+                m for m in total_committee_person_dict_result["Filtered Members"] if m in displayed_recommended
+            ]
+            statistical_row["篩選原因"] = {
+                m: r for m, r in total_committee_person_dict_result["Filter Reasons"].items()
+                if m in displayed_recommended
+            }
 
             #- 過濾後遞補：依分數順序取未被篩掉者，補到 BACKFILL_TARGET 位
             filtered_out = set(total_committee_person_dict_result["Filtered Members"])
